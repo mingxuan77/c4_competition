@@ -221,6 +221,7 @@ DEFAULTS = {
     "workflow_logs": [],      # 最新一次工作流日志
     "workflow_results": {},   # 最新一次工作流结果
     "workflow_tasks": [],     # 最新一次工作流任务列表
+    "workflow_intent": {},    # 最新一次意图解析结果
     "workflow_running": False,
     "executed_count": 0,
 }
@@ -306,13 +307,124 @@ def build_workflow_response(user_input: str, intent_result: dict, tasks: list, r
     return "\n".join(lines)
 
 
-def execute_workflow(user_input: str) -> tuple[str, dict, list, list]:
+def render_intent_visualization(intent_result: dict, tasks: list[dict] | None = None):
+    """以任务流形式展示意图解析结果。"""
+    import html
+
+    tasks = tasks or []
+    intent = html.escape(intent_result.get("intent", "已识别复合任务"))
+    type_labels = {
+        "retrieval": ("🔍", "数据检索"),
+        "data_processing": ("🧹", "数据处理"),
+        "ml_prediction": ("🤖", "机器学习"),
+        "algorithm": ("⚙️", "算法优化"),
+        "security": ("🛡️", "安全分析"),
+        "code_execution": ("💻", "代码执行"),
+        "network": ("🌐", "网络监控"),
+        "database": ("🗄️", "数据库"),
+        "strategy": ("📊", "策略输出"),
+        "report_export": ("📄", "报告导出"),
+    }
+
+    nodes = []
+    for index, task in enumerate(tasks):
+        task_id = html.escape(str(task.get("task_id", "-")))
+        task_type = task.get("task_type", task.get("type", "-"))
+        icon, label = type_labels.get(task_type, ("🧩", str(task_type)))
+        desc = html.escape(str(task.get("description", ""))[:52])
+        deps = task.get("deps", [])
+        dep_text = "无前置依赖" if not deps else "依赖 " + ", ".join(html.escape(str(dep)) for dep in deps)
+        arrow = '<div class="intent-arrow">↓</div>' if index else ""
+        nodes.append(
+            arrow
+            + f'<div class="intent-node">'
+            + f'<div class="intent-node-head">'
+            + f'<span class="intent-node-id">{task_id}</span>'
+            + f'<span>{icon} {html.escape(label)}</span>'
+            + f'</div>'
+            + f'<div class="intent-node-desc">{desc}</div>'
+            + f'<div class="intent-node-deps">{dep_text}</div>'
+            + f'</div>'
+        )
+
+    node_html = "\n".join(nodes) if nodes else '<div class="intent-node-deps">正在生成任务节点...</div>'
+    visual_html = (
+        "<style>"
+        ".intent-visual{border:1px solid #dbe4ee;border-radius:10px;background:#fbfcff;padding:12px;margin:8px 0 12px;}"
+        ".intent-core{border-left:4px solid #5b4ae0;background:#ffffff;padding:10px 12px;border-radius:8px;font-weight:700;color:#202040;margin-bottom:10px;}"
+        ".intent-node{border:1px solid #d7deea;background:#ffffff;border-radius:8px;padding:9px 10px;box-shadow:0 1px 4px rgba(20,30,60,0.05);}"
+        ".intent-node-head{display:flex;align-items:center;gap:8px;font-size:0.86rem;font-weight:700;color:#26264a;}"
+        ".intent-node-id{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;border-radius:50%;background:#e9ecff;color:#4b45c8;font-weight:800;}"
+        ".intent-node-desc{margin-top:6px;font-size:0.78rem;line-height:1.35;color:#384058;}"
+        ".intent-node-deps{margin-top:5px;font-size:0.72rem;color:#758095;}"
+        ".intent-arrow{text-align:center;color:#8490aa;line-height:1.3;font-weight:800;}"
+        "</style>"
+        f'<div class="intent-visual"><div class="intent-core">🧠 {intent}</div>{node_html}</div>'
+    )
+    st.markdown(visual_html, unsafe_allow_html=True)
+
+
+def render_workflow_stage(
+    stage: str,
+    progress: int,
+    logs: list[dict] | None = None,
+    intent_result: dict | None = None,
+    tasks: list[dict] | None = None,
+):
+    """渲染工作流执行中的阶段状态。"""
+    logs = logs or []
+    tasks = tasks or []
+
+    st.info("⚡ **多Agent协同工作中...**")
+    st.progress(progress, text=stage)
+
+    st.markdown("#### 🧭 阶段进度")
+    stage_rows = [
+        ("意图解析", 25),
+        ("任务拆解", 45),
+        ("Agent调度", 70),
+        ("结果汇总", 95),
+    ]
+    for name, threshold in stage_rows:
+        marker = "✅" if progress >= threshold else "🔄" if name in stage else "⏳"
+        st.caption(f"{marker} {name}")
+
+    if intent_result:
+        st.markdown("#### 🧠 意图解析")
+        render_intent_visualization(intent_result, tasks)
+
+    if tasks:
+        st.markdown("#### 🧩 任务拆解")
+        import pandas as pd
+        rows = []
+        for task in tasks:
+            rows.append({
+                "ID": task.get("task_id", "-"),
+                "类型": task.get("task_type", task.get("type", "-")),
+                "依赖": ", ".join(task.get("deps", [])) or "无",
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=min(len(rows) * 38 + 38, 260))
+
+    if logs:
+        st.markdown("#### 📜 实时日志")
+        log_text = ""
+        for entry in logs[-10:]:
+            level_icon = {"INFO": "ℹ️", "SUCCESS": "✅", "ERROR": "❌", "WARNING": "⚠️"}.get(entry["level"], "📝")
+            tid_str = f" [{entry['task_id']}]" if entry.get("task_id") else ""
+            ts = entry.get("timestamp", "")
+            log_text += f"{ts} {level_icon}{tid_str} {entry['message']}\n"
+        st.code(log_text, language=None)
+
+
+def execute_workflow(user_input: str, status_callback=None) -> tuple[str, dict, list, list, dict]:
     """使用 LangChain + LangGraph 执行 Meta-Agent → Worker 调度流程。"""
     from config import LLM_CONFIG
 
     logs = []
     logs.append({"timestamp": time.strftime("%H:%M:%S"), "level": "INFO",
                  "message": f"🚀 [LangGraph] 启动工作流: {user_input[:50]}...", "task_id": None})
+    if status_callback:
+        status_callback("🔍 意图解析中...", 10, logs, None, [])
 
     # 步骤1: 意图解析（优先使用 LangChain structured output）
     from meta_agent.langgraph_engine import parse_intent_with_langchain
@@ -334,17 +446,28 @@ def execute_workflow(user_input: str) -> tuple[str, dict, list, list]:
         from meta_agent.task_planner import TaskPlanner
         tasks = TaskPlanner().plan(intent_result)
 
+    if status_callback:
+        status_callback("✅ 意图解析完成", 35, logs, intent_result, tasks)
+
     logs.append({"timestamp": time.strftime("%H:%M:%S"), "level": "INFO",
                  "message": f"任务拆解: {len(tasks)} 个子任务", "task_id": None})
+    if status_callback:
+        status_callback("🧩 任务拆解完成", 50, logs, intent_result, tasks)
 
     # 步骤2: LangGraph 并行调度执行（替代旧的 DAGBuilder + Scheduler + threading）
     from meta_agent.langgraph_engine import run_with_langgraph
+    if status_callback:
+        status_callback("🚀 Agent调度执行中...", 70, logs, intent_result, tasks)
     engine_result = run_with_langgraph(tasks, user_input)
     results = engine_result["results"]
     logs.extend(engine_result["logs"])
+    if status_callback:
+        status_callback("📦 结果汇总中...", 95, logs, intent_result, tasks)
 
     response = build_workflow_response(user_input, intent_result, tasks, results)
-    return response, results, tasks, logs
+    if status_callback:
+        status_callback("✅ 工作流执行完成", 100, logs, intent_result, tasks)
+    return response, results, tasks, logs, intent_result
 
 
 # ─── 侧边栏 ─────────────────────────────────────────────────
@@ -400,6 +523,7 @@ with st.sidebar:
         st.session_state.workflow_results = {}
         st.session_state.workflow_logs = []
         st.session_state.workflow_tasks = []
+        st.session_state.workflow_intent = {}
         st.session_state.workflow_running = False
         st.rerun()
 
@@ -547,12 +671,15 @@ with col_right:
 
         if last_user_msg:
             progress_placeholder = st.empty()
-            with progress_placeholder.container():
-                st.info("⚡ **多Agent协同工作中...**")
-                prog_bar = st.progress(0, text="🔍 意图解析中...")
-                st.caption("系统正在调度多个专业Agent协同完成任务，请稍候...")
 
-            response_html, results, tasks, logs = execute_workflow(last_user_msg)
+            def update_workflow_stage(stage, progress, logs=None, intent_result=None, tasks=None):
+                with progress_placeholder.container():
+                    render_workflow_stage(stage, progress, logs, intent_result, tasks)
+
+            response_html, results, tasks, logs, intent_result = execute_workflow(
+                last_user_msg,
+                status_callback=update_workflow_stage,
+            )
 
             progress_placeholder.empty()
             st.success(f"✅ 执行完成！共 {len(results)} 个子任务")
@@ -561,6 +688,7 @@ with col_right:
             st.session_state.workflow_results = results
             st.session_state.workflow_logs = logs
             st.session_state.workflow_tasks = tasks
+            st.session_state.workflow_intent = intent_result
             st.session_state.workflow_running = False
             st.session_state.executed_count += 1
 
@@ -588,6 +716,24 @@ with col_right:
         c1.metric("总计", total)
         c2.metric("成功", success_count)
         c3.metric("失败", failed_count, delta_color="inverse")
+
+        intent_result = st.session_state.workflow_intent
+        if intent_result:
+            st.markdown("#### 🧠 意图解析")
+            render_intent_visualization(intent_result, st.session_state.workflow_tasks)
+
+        tasks = st.session_state.workflow_tasks
+        if tasks:
+            st.markdown("#### 🧩 任务拆解")
+            import pandas as pd
+            task_rows = []
+            for task in tasks:
+                task_rows.append({
+                    "ID": task.get("task_id", "-"),
+                    "类型": task.get("task_type", task.get("type", "-")),
+                    "依赖": ", ".join(task.get("deps", [])) or "无",
+                })
+            st.dataframe(pd.DataFrame(task_rows), use_container_width=True, hide_index=True, height=min(len(task_rows) * 38 + 38, 260))
 
         # 任务状态表
         import pandas as pd

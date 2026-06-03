@@ -19,7 +19,7 @@ LLM_CONFIG = {
 CHAT_CONFIG = {
     "max_history": 30,
     "temperature": 0.7,
-    "max_tokens": 4096,
+    "max_tokens": 8192,
     "system_prompt": """你是"跨域分布式多智能体协同调度系统"的智能助手，基于 Internet of Agents 架构。
 
 你的核心能力：

@@ -306,6 +306,22 @@ def parse_intent_with_langchain(user_input: str) -> dict:
                 "deps": deps.get(t["task_id"], []),
                 "params": {},
             })
+
+        # 确保最后有 report_export 任务（生成可下载文件）
+        has_export = any(t["task_type"] == "report_export" for t in tasks)
+        has_strategy = any(t["task_type"] == "strategy" for t in tasks)
+        if not has_export:
+            last_id = max((t["task_id"] for t in tasks), key=lambda x: ord(x[0]) if x else 0)
+            next_id = chr(ord(last_id) + 1) if last_id else "F"
+            export_deps = [last_id]
+            tasks.append({
+                "task_id": next_id,
+                "task_type": "report_export",
+                "description": "将分析结果导出为Word/Excel/PDF报告文件",
+                "deps": export_deps,
+                "params": {"title": result.get("intent", "分析报告")},
+            })
+
         return {"intent": result["intent"], "tasks": tasks}
     except Exception as e:
         return None  # 失败 → 回退规则匹配

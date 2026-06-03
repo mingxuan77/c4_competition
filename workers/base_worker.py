@@ -46,7 +46,7 @@ class BaseWorker(ABC):
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.4,
-                max_tokens=600,
+                max_tokens=1500,
             )
             return response.choices[0].message.content
         except Exception:

@@ -226,12 +226,26 @@ class IntentParser:
             prev_id = tid
 
         # 确保最后有策略输出
-        if detected_types[0][0] != "strategy" and len(tasks) < 5:
+        has_strategy = any(t['type'] == 'strategy' for t in tasks)
+        if not has_strategy and len(tasks) < 5:
             tid = chr(ord("A") + len(tasks))
             tasks.append({
                 "task_id": tid,
                 "type": "strategy",
                 "description": "综合各模块结果，生成最终策略建议",
+            })
+            if prev_id:
+                deps[tid] = [prev_id]
+            prev_id = tid
+
+        # 始终追加报告导出任务
+        has_export = any(t['type'] == 'report_export' for t in tasks)
+        if not has_export:
+            tid = chr(ord("A") + len(tasks))
+            tasks.append({
+                "task_id": tid,
+                "type": "report_export",
+                "description": "将分析结果导出为Word/Excel/PDF报告文件",
             })
             if prev_id:
                 deps[tid] = [prev_id]
@@ -263,6 +277,8 @@ class IntentParser:
 - network: 网络监控(拓扑发现/流量分析/异常检测)
 - database: 数据库(查询优化/迁移/索引/ETL)
 - strategy: 策略输出(综合建议/最终方案/报告生成)
+- http_request: HTTP调用(调用API/抓取网页/webhook)
+- report_export: 报告导出(生成Word/Excel/PDF文件)
 
 输出严格JSON（不要markdown标记）：
 {
@@ -288,7 +304,7 @@ class IntentParser:
                 {"role": "user", "content": f"请解析以下任务：{user_input}"},
             ],
             temperature=LLM_CONFIG["temperature"],
-            max_tokens=LLM_CONFIG["max_tokens"],
+            max_tokens=LLM_CONFIG.get("max_tokens", 4096),
         )
 
         content = response.choices[0].message.content.strip()

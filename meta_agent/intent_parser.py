@@ -83,6 +83,13 @@ TASK_TYPES = {
         "label": "报告导出",
         "description_template": "将分析结果导出为表格、Markdown、HTML、PDF 等格式",
     },
+    "http_request": {
+        "keywords": ["API", "HTTP", "请求", "接口", "webhook", "抓取", "调用",
+                     "REST", "POST", "GET", "curl", "fetch", "网址", "链接"],
+        "worker": "http_worker",
+        "label": "HTTP调用",
+        "description_template": "发送HTTP请求调用外部API或抓取网页数据",
+    },
 }
 
 # 预设流程模板 — 支持丰富场景

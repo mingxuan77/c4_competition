@@ -51,3 +51,21 @@ class BaseWorker(ABC):
             return response.choices[0].message.content
         except Exception:
             return None
+
+    def _call_tool(self, tool_name: str, **kwargs) -> dict:
+        """调用 ToolRegistry 中注册的工具并返回标准化结果。
+
+        这是 Worker 接入真实工具能力的入口。所有 Worker 都可以通过
+        此方法调用任何已注册的工具。
+
+        Returns:
+            {"success": bool, "data": ..., "error": ..., "files": [...], "metadata": {...}}
+        """
+        from workers.tools.registry import ToolRegistry
+        result = ToolRegistry().call(tool_name, **kwargs)
+        return result.to_dict()
+
+    def _get_available_tools_prompt(self) -> str:
+        """获取可用工具列表的文本描述（供 LLM prompt 使用）。"""
+        from workers.tools.registry import ToolRegistry
+        return ToolRegistry().get_tools_prompt()

@@ -1,86 +1,89 @@
-"""报告导出 Worker - 负责生成 Markdown 表格、HTML 报告、模拟 PDF 导出"""
+"""报告导出 Worker — 调用文件导出工具生成真实的 Word/Excel/PDF 文件"""
 
-import json
 from workers.base_worker import BaseWorker
 
 
 class ReportExporter(BaseWorker):
+    """真正的报告导出器——生成 Word、Excel、PDF 文件到 outputs/ 目录。"""
+
     def __init__(self):
         super().__init__("ReportExporter")
 
     def execute(self, task: dict) -> dict:
-        result = self._simulate_work(task.get("description", ""))
+        desc = task.get("description", "")
+        result = {"worker": self.name}
 
-        # 生成示例统计表格
-        stats_table = {
-            "columns": ["指标", "当前值", "目标值", "提升幅度"],
-            "rows": [
-                ["安全合规评分", "78.5/100", "95+/100", "+21%"],
-                ["网络P95延迟", "14.7ms", "<8ms", "-46%"],
-                ["数据库查询延迟", "2,100ms", "<200ms", "-90%"],
-                ["投资组合年化收益", "5.5%", "8.7%", "+58%"],
-                ["系统可用性", "99.5%", "99.95%", "+0.45%"],
-                ["MTTR(平均修复时间)", "4小时", "15分钟", "-94%"],
-            ],
-        }
+        # 收集上游数据
+        upstream_data = task.get("params", {}).get("upstream_results", {})
+        title = task.get("params", {}).get("title", "多智能体协同分析报告")
 
-        # 生成 Markdown 格式报告
-        md_report = self._build_markdown_report(stats_table, task)
+        # 构建报告内容
+        content_lines = [f"# {title}", "", "## 任务概述", "", desc, ""]
 
-        # 生成 HTML 格式报告
-        html_report = self._build_html_report(stats_table, task)
+        if upstream_data:
+            content_lines.append("## 各Agent分析结果")
+            for agent_id, agent_result in upstream_data.items():
+                if isinstance(agent_result, dict):
+                    output = (
+                        agent_result.get("output", "")
+                        or agent_result.get("result", {}).get("output", "")
+                    )
+                    if output:
+                        content_lines.append(f"### {agent_id}")
+                        content_lines.append(output)
+                        content_lines.append("")
 
-        # 模拟 PDF 导出元信息
-        pdf_meta = {
-            "filename": f"analysis_report_{task.get('task_id', 'output')}.pdf",
-            "pages": 12,
-            "size_kb": 842,
-            "sections": ["执行摘要", "数据分析", "建模结果", "策略建议", "风险评估", "附录"],
-            "generated": True,
-        }
+        # 构建统计表格
+        table_rows = [
+            {"指标": "分析任务数", "数值": str(len(upstream_data)), "状态": "完成"},
+            {"指标": "报告生成时间", "数值": "自动生成", "状态": "✅"},
+            {"指标": "输出格式", "数值": "Word + Excel + PDF", "状态": "✅"},
+        ]
 
-        result["stats_table"] = stats_table
-        result["markdown_report"] = md_report[:500] + "..."
-        result["html_report"] = html_report[:500] + "..."
-        result["pdf_export"] = pdf_meta
+        content = "\n".join(content_lines)
+        generated_files = []
+
+        # 1. 导出 Excel
+        if table_rows:
+            excel_result = self._call_tool(
+                "export_excel",
+                filename=f"{title}_数据汇总",
+                sheets={"分析摘要": table_rows},
+            )
+            if excel_result.get("success"):
+                generated_files.extend(excel_result.get("files", []))
+
+        # 2. 导出 Word
+        docx_result = self._call_tool(
+            "export_docx",
+            title=title,
+            content=content,
+            table_data=table_rows,
+        )
+        if docx_result.get("success"):
+            generated_files.extend(docx_result.get("files", []))
+
+        # 3. 导出 PDF
+        pdf_result = self._call_tool(
+            "export_pdf",
+            title=title,
+            content=content,
+        )
+        if pdf_result.get("success"):
+            generated_files.extend(pdf_result.get("files", []))
+
+        # 汇总输出
+        file_list = "\n".join(
+            f"- 📄 {f}" for f in generated_files
+        ) if generated_files else "（无文件生成）"
+
         result["output"] = (
-            f"[报告导出] 已生成 3 种格式: "
-            f"Markdown({len(md_report)}字符) | HTML({len(html_report)}字符) | "
-            f"PDF({pdf_meta['pages']}页, {pdf_meta['size_kb']}KB)"
+            f"[报告导出] ✅ 已生成 {len(generated_files)} 个文件:\n{file_list}"
         )
+        result["generated_files"] = generated_files
+        result["export_details"] = {
+            "docx": docx_result,
+            "excel": excel_result,
+            "pdf": pdf_result,
+        }
         return result
-
-    def _build_markdown_report(self, table: dict, task: dict) -> str:
-        header = "| " + " | ".join(table["columns"]) + " |"
-        sep = "|" + "|".join([" --- " for _ in table["columns"]]) + "|"
-        rows = "\n".join("| " + " | ".join(row) + " |" for row in table["rows"])
-        return f"""# 多智能体协同分析报告
-
-## 概述
-本报告由 Meta-Agent 调度 10 个异构智能体协同生成。
-
-## 关键指标汇总
-{header}
-{sep}
-{rows}
-
-## 结论
-系统已完成全流程分析，具体策略建议请参见策略输出部分。
-"""
-
-    def _build_html_report(self, table: dict, task: dict) -> str:
-        thead = "<tr>" + "".join(f"<th>{c}</th>" for c in table["columns"]) + "</tr>"
-        tbody = "\n".join(
-            "<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>"
-            for row in table["rows"]
-        )
-        return f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>分析报告</title>
-<style>body{{font-family:'Microsoft YaHei',sans-serif;margin:40px}}
-table{{border-collapse:collapse;width:100%}}
-th,td{{border:1px solid #ddd;padding:12px;text-align:left}}
-th{{background:#4A90D9;color:white}}</style></head>
-<body><h1>多智能体协同分析报告</h1>
-<table>{thead}{tbody}</table>
-<p><em>由 Meta-Agent 多智能体协同调度系统自动生成</em></p>
-</body></html>"""

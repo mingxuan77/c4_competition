@@ -760,6 +760,70 @@ with col_right:
                 log_text += f"{ts} {level_icon}{tid_str} {entry['message']}\n"
             st.code(log_text, language=None)
 
+        # ── 文件下载区域 ──
+        all_files = []
+        for tid in sorted(results.keys()):
+            r = results[tid]
+            if r.get("status") != "success":
+                continue
+            result_data = r.get("result", {})
+            if not isinstance(result_data, dict):
+                continue
+            files = result_data.get("generated_files", [])
+            if files:
+                all_files.extend(files)
+
+        if all_files:
+            st.markdown("#### 📥 下载报告文件")
+            import base64
+            import zipfile
+            import io
+
+            for fpath in all_files:
+                fname = fpath.replace("\\", "/").split("/")[-1]
+                try:
+                    with open(fpath, "rb") as f:
+                        fdata = f.read()
+                    fsize_kb = round(len(fdata) / 1024, 1)
+                    ext = fname.rsplit(".", 1)[-1] if "." in fname else ""
+                    icon = {"docx": "📄", "xlsx": "📊", "pdf": "📕"}.get(ext, "📎")
+                    col1, col2, col3 = st.columns([0.4, 0.3, 0.3])
+                    col1.caption(f"{icon} {fname}")
+                    col2.caption(f"{fsize_kb} KB")
+                    col3.download_button(
+                        label="下载",
+                        data=fdata,
+                        file_name=fname,
+                        mime={
+                            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            "pdf": "application/pdf",
+                        }.get(ext, "application/octet-stream"),
+                        key=f"dl_{fname}",
+                        use_container_width=True,
+                    )
+                except Exception:
+                    st.caption(f"⚠️ 无法读取: {fname}")
+
+            # 打包下载
+            if len(all_files) > 1:
+                zip_buf = io.BytesIO()
+                with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for fpath in all_files:
+                        fname = fpath.replace("\\", "/").split("/")[-1]
+                        try:
+                            with open(fpath, "rb") as f:
+                                zf.writestr(fname, f.read())
+                        except Exception:
+                            pass
+                st.download_button(
+                    label="📦 打包下载全部文件 (ZIP)",
+                    data=zip_buf.getvalue(),
+                    file_name="analysis_report_pack.zip",
+                    mime="application/zip",
+                    use_container_width=True,
+                )
+
         st.markdown('</div>', unsafe_allow_html=True)
     else:
         st.markdown('<div class="right-panel">', unsafe_allow_html=True)
@@ -785,6 +849,8 @@ with col_right:
             ("🗄️", "数据库", "查询优化/迁移"),
             ("💻", "代码执行", "沙箱安全执行"),
             ("📊", "策略输出", "综合报告/建议"),
+            ("🔗", "HTTP调用", "REST API/Webhook"),
+            ("📄", "报告导出", "Word/Excel/PDF 文件"),
         ]
         for icon, name, desc in agents:
             st.caption(f"{icon} **{name}** — {desc}")

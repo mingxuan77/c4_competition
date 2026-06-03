@@ -15,6 +15,9 @@ from langgraph.graph import StateGraph, START, END
 from langchain_openai import ChatOpenAI
 from config import LLM_CONFIG, get_llm_client
 
+# 导入内置工具包，触发 @tool 装饰器自动注册
+import workers.tools.builtin  # noqa: F401
+
 
 # ═══════════════════════════════════════════════════
 # 1. State — LangGraph 节点间流转的状态
@@ -49,6 +52,7 @@ TASK_TYPE_MAP = {
     "database":        ("database_worker",   "数据库",   "🗄️"),
     "strategy":        ("strategy_worker",   "策略输出", "📊"),
     "report_export":   ("report_exporter",   "报告导出", "📄"),
+    "http_request":    ("http_worker",       "HTTP调用", "🌐"),
 }
 
 _workers_cache = None
@@ -65,6 +69,7 @@ def _get_workers():
         from workers.database_worker import DatabaseWorker
         from workers.strategy_worker import StrategyWorker
         from workers.report_exporter import ReportExporter
+        from workers.http_worker import HTTPWorker
         _workers_cache = {
             "retrieval_worker": RetrievalWorker(),
             "data_worker": DataWorker(),
@@ -76,6 +81,7 @@ def _get_workers():
             "database_worker": DatabaseWorker(),
             "strategy_worker": StrategyWorker(),
             "report_exporter": ReportExporter(),
+            "http_worker": HTTPWorker(),
         }
     return _workers_cache
 

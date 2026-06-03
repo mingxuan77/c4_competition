@@ -1,0 +1,22 @@
+# 外部工具配置 — 非Python开发者可通过此文件注册工具
+# 系统启动时自动加载
+
+tools:
+  # ─── HTTP API 工具示例 ───
+  # - name: get_weather
+  #   description: 获取指定城市的实时天气信息
+  #   type: http
+  #   endpoint: https://api.weather.com/v1/current
+  #   method: GET
+  #   headers:
+  #     Authorization: Bearer ${WEATHER_API_KEY}
+  #   parameters:
+  #     city: 城市名称
+
+  # ─── 脚本工具示例 ───
+  # - name: run_data_pipeline
+  #   description: 执行数据处理流水线脚本
+  #   type: script
+  #   command: python scripts/data_pipeline.py
+  #   parameters:
+  #     input_file: 输入文件路径

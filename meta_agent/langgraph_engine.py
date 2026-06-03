@@ -110,7 +110,17 @@ def _make_node(task: dict):
             }
 
         try:
-            result = worker.execute(task)
+            # 将上游任务的结果注入到当前任务，让下游Agent能引用前面的分析
+            task_with_context = dict(task)
+            task_with_context.setdefault("params", {})
+            upstream = {}
+            for dep_id in task.get("deps", []):
+                dep_result = state["results"].get(dep_id, {})
+                if dep_result.get("status") == "success":
+                    upstream[dep_id] = dep_result.get("result", {})
+            task_with_context["params"]["upstream_results"] = upstream
+
+            result = worker.execute(task_with_context)
             return {
                 "results": {tid: {"status": "success", "result": result,
                                   "worker_name": worker_name, "type_label": type_label}},

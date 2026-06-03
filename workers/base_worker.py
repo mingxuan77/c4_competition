@@ -62,7 +62,13 @@ class BaseWorker(ABC):
             {"success": bool, "data": ..., "error": ..., "files": [...], "metadata": {...}}
         """
         from workers.tools.registry import ToolRegistry
-        result = ToolRegistry().call(tool_name, **kwargs)
+
+        # 懒加载：首次调用时确保内置工具已注册
+        registry = ToolRegistry()
+        if not registry.list_tools():
+            import workers.tools.builtin  # noqa: F401
+
+        result = registry.call(tool_name, **kwargs)
         return result.to_dict()
 
     def _get_available_tools_prompt(self) -> str:

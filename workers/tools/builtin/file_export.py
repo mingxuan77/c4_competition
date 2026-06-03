@@ -6,12 +6,14 @@ from datetime import datetime
 from workers.tools.registry import tool
 from workers.tools.schema import ToolResult
 
-OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "outputs")
+_OUTPUT_DIR = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "outputs")
+)
 
 
 def _ensure_output_dir():
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    return OUTPUT_DIR
+    os.makedirs(_OUTPUT_DIR, exist_ok=True)
+    return _OUTPUT_DIR
 
 
 # ═══════════════════════════════════════════

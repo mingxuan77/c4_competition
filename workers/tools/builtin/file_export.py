@@ -247,8 +247,8 @@ def export_pdf(
         ]
         for fp in font_paths:
             if os.path.exists(fp):
-                pdf.add_font("CJK", "", fp, uni=True)
-                pdf.add_font("CJK", "B", fp, uni=True)
+                pdf.add_font("CJK", "", fp)
+                pdf.add_font("CJK", "B", fp)
                 font_loaded = True
                 break
 

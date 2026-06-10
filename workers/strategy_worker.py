@@ -30,7 +30,7 @@ class StrategyWorker(BaseWorker):
                     "2. 列出3-5条具体的、可操作的策略建议，每条包含行动方案和理由\n"
                     "3. 评估主要风险和缓解措施\n"
                     "4. 用具体数据和事实支撑结论，不要空洞的套话\n"
-                    "5. 输出800-1500字，确保内容完整不截断"
+                    "5. 输出2000-4000字，确保内容完整不截断"
                 ),
                 user_prompt=(
                     f"任务: {desc}\n\n"
@@ -42,7 +42,7 @@ class StrategyWorker(BaseWorker):
             llm_output = self._call_llm(
                 system_prompt=(
                     "你是策略分析师。根据任务描述给出具体策略建议，"
-                    "每条建议包含行动方案和理由。输出500-800字，确保内容完整。"
+                    "每条建议包含行动方案和理由。输出1000-2000字，确保内容完整。"
                 ),
                 user_prompt=f"任务: {desc}",
             )
@@ -50,7 +50,7 @@ class StrategyWorker(BaseWorker):
         if llm_output:
             result["strategy"] = {
                 "title": "综合分析报告",
-                "executive_summary": llm_output[:400],
+                "executive_summary": llm_output[:800],
                 "recommendations": [],
                 "risk_assessment": {"overall_risk_level": "详见分析"},
                 "conclusion": llm_output,

@@ -246,77 +246,98 @@ for key, default in DEFAULTS.items():
 # ─── 辅助函数 ───────────────────────────────────────────────
 
 def build_workflow_response(user_input: str, intent_result: dict, tasks: list, results: dict) -> str:
-    """将工作流执行结果组装成完整的自然语言报告。"""
+    """将工作流执行结果组装成简洁的结论报告。"""
     total = len(results)
     success = sum(1 for r in results.values() if r.get("status") == "success")
     failed = sum(1 for r in results.values() if r.get("status") == "failed")
 
-    lines = [
-        f'<div class="workflow-card">',
-        f'<h3>📊 多Agent协同分析完成</h3>',
-        f'<p>根据你的需求「<strong>{user_input[:60]}</strong>」，调度了 <strong>{total}</strong> 个专业子Agent协同完成分析，其中 {success} 个成功{f"、{failed} 个失败" if failed else ""}。</p>',
-    ]
+    # 判断任务类型：调整类 vs 分析类
+    task_types = [t.get("task_type", "") for t in tasks]
+    is_adjustment = "production_adjuster" in task_types
+    is_monitor_only = task_types == ["production_monitor"] or (
+        len(task_types) <= 3 and "production_monitor" in task_types
+        and "production_adjuster" not in task_types
+    )
 
-    # 提取策略报告
-    strategy = None
-    for r in results.values():
-        if r.get("status") == "success":
-            rd = r.get("result", {})
-            if isinstance(rd, dict) and "strategy" in rd:
-                strategy = rd["strategy"]
-                break
+    # 提取 strategy worker 的结论
+    final_output = ""
+    adjustment_result = None
+    agent_steps = []  # 紧凑的步骤摘要
 
-    # 逐个任务结果
     sorted_ids = sorted(results.keys())
-    for i, tid in enumerate(sorted_ids, 1):
+    for tid in sorted_ids:
         r = results[tid]
         if r.get("status") != "success":
             continue
         result_data = r.get("result", {})
         if not isinstance(result_data, dict):
             continue
-        output = result_data.get("output", "")
         type_label = r.get("type_label", "")
-        if output:
-            lines.append(f"<p><strong>步骤{i} — {type_label}Agent：</strong><br/>{output}</p>")
+
+        # 记录每个agent做了什么（一行，不展示输出）
+        output_preview = ""
+        raw_output = result_data.get("output", "")
+        if raw_output:
+            # 只取第一句作为摘要
+            first_line = raw_output.split("\n")[0].strip("#").strip()[:80]
+            output_preview = first_line
+
+        # 调整agent的结果特殊处理
+        if "production_adjuster" == r.get("worker_name", ""):
+            adjustment_result = result_data.get("applied_adjustments", [])
+
+        agent_steps.append({
+            "id": tid,
+            "type_label": type_label,
+            "preview": output_preview,
+        })
+
+        # 取最后一个成功agent的输出作为最终结论
+        final_output = raw_output
+
+    # ── 构建HTML卡片 ──
+    lines = ['<div class="workflow-card">']
+
+    if is_adjustment and adjustment_result:
+        # 调整类任务：紧凑的调整确认卡片
+        lines.append(f'<h3>🔧 产线调整完成</h3>')
+        for adj in adjustment_result:
+            lines.append(
+                f'<p>✅ <strong>{adj.get("line", "")}.{adj.get("param", "")}</strong>: '
+                f'{adj.get("old_value", "?")} → <strong>{adj.get("new_value", "?")}</strong>'
+                f' — {adj.get("reason", "")}</p>'
+            )
+        lines.append(
+            f'<p style="color:#667788;font-size:0.85rem;">'
+            f'共调度 {total} 个Agent协同完成 | 预计2分钟内见效</p>'
+        )
+    else:
+        # 分析类任务：简洁结论
+        lines.append(f'<h3>📊 {intent_result.get("intent", "分析完成")}</h3>')
+
+        # 紧凑的Agent步骤摘要
+        lines.append(
+            f'<p style="color:#667788;font-size:0.82rem;">'
+            f'调度 {total} 个Agent协同完成 → '
+            + " → ".join(f'{s["type_label"]}' for s in agent_steps)
+            + f'</p>'
+        )
+
+        # 最终结论（取strategy agent的输出，截断过长内容）
+        if final_output:
+            # 清理markdown标题，保留纯文本
+            clean_output = final_output
+            # 限制长度
+            if len(clean_output) > 1500:
+                clean_output = clean_output[:1500] + "\n\n...(内容已截断，完整报告请下载文件)"
+            lines.append(
+                f'<div style="margin-top:12px;padding:12px;background:#fafbfc;'
+                f'border-radius:8px;font-size:0.9rem;line-height:1.6;">'
+                f'{clean_output.replace(chr(10), "<br/>")}'
+                f'</div>'
+            )
 
     lines.append('</div>')
-
-    # 策略报告详情
-    if strategy:
-        lines.append('<div class="workflow-card">')
-        lines.append(f"<h3>🎯 综合分析结论</h3>")
-        lines.append(f"<p>{strategy.get('executive_summary', '')}</p>")
-
-        recs = strategy.get("recommendations", [])
-        if recs:
-            lines.append("<h4>📋 策略建议清单</h4>")
-            for rec in recs:
-                p = rec.get('priority', '')
-                a = rec.get('action', '')
-                r = rec.get('rationale', '')
-                e = rec.get('estimated_impact', '')
-                t = rec.get('timeline', '')
-                lines.append(f"<p><strong>[{p}] {a}</strong><br/>")
-                lines.append(f"依据: {r}<br/>预期效果: {e}<br/>时间线: {t}</p>")
-
-        risk = strategy.get("risk_assessment", {})
-        lines.append(f"<h4>⚡ 风险评估</h4>")
-        lines.append(f"<p>整体风险等级: <strong>{risk.get('overall_risk_level', '-')}</strong></p>")
-        for rk in risk.get("key_risks", []):
-            lines.append(f"<p>- ⚠️ {rk}</p>")
-        lines.append(f"<p>缓解措施: {risk.get('mitigation', '')}</p>")
-
-        kpis = strategy.get("kpi_targets", {})
-        if kpis:
-            lines.append("<h4>📈 预期KPI指标</h4>")
-            for k, v in kpis.items():
-                lines.append(f"<p>- <strong>{k}</strong>: {v}</p>")
-
-        lines.append(f"<h4>💡 总结</h4>")
-        lines.append(f"<p>{strategy.get('conclusion', '')}</p>")
-        lines.append('</div>')
-
     return "\n".join(lines)
 
 
@@ -536,27 +557,48 @@ def _render_monitoring_dashboard():
         )
 
         with card_col_l:
-            _render_line_card("litho", lines.get("litho", {}))
+            try:
+                _render_line_card("litho", lines.get("litho", {}))
+            except Exception:
+                st.caption("光刻线数据加载中...")
         with card_col_e:
-            _render_line_card("etch", lines.get("etch", {}))
+            try:
+                _render_line_card("etch", lines.get("etch", {}))
+            except Exception:
+                st.caption("刻蚀线数据加载中...")
         with card_col_t:
-            _render_test_card(lines.get("test", {}))
+            try:
+                _render_test_card(lines.get("test", {}))
+            except Exception:
+                st.caption("测试线数据加载中...")
         with card_col_log:
-            _render_adjustment_log()
+            try:
+                _render_adjustment_log()
+            except Exception:
+                st.caption("调整日志加载中...")
 
         st.markdown("---")
 
         # === 良率趋势图 ===
-        st.subheader("📈 良率趋势")
-        _render_yield_chart()
+        st.subheader("📈 良率趋势 (近30秒)")
+        try:
+            _render_yield_chart()
+        except Exception as e:
+            st.caption(f"图表加载失败: {e}")
 
         # === 产出台账 ===
         st.subheader("📊 产出台账")
-        _render_output_chart()
+        try:
+            _render_output_chart()
+        except Exception:
+            st.caption("产出图表加载中...")
 
         # === 事件时间线 ===
         st.subheader("⚡ 事件时间线")
-        _render_event_timeline()
+        try:
+            _render_event_timeline()
+        except Exception:
+            st.caption("事件日志加载中...")
     else:
         st.markdown("""
         <div style="text-align:center; padding:60px 20px; color:#8899aa;">
@@ -681,74 +723,88 @@ def _render_adjustment_log():
 
 
 def _render_yield_chart():
-    """渲染良率趋势折线图"""
-    history = st.session_state.simulation_history
-    if not history:
-        st.caption("等待数据...")
-        return
+    """渲染良率趋势折线图（紧凑版）"""
+    try:
+        history = st.session_state.simulation_history
+        if not history or len(history) < 2:
+            st.caption("等待数据...")
+            return
 
-    chart_data = []
-    for frame in history:
-        ts = frame.get("timestamp", "")
-        lines = frame.get("production_lines", {})
-        for line_id in ["litho", "etch"]:
-            data = lines.get(line_id, {})
-            chart_data.append({
-                "时间": ts,
-                "产线": data.get("name", line_id),
-                "良率": data.get("yield_rate", 0) * 100,
-            })
+        # 只取最近30帧，避免图表过长
+        recent = history[-30:]
+        chart_data = []
+        for frame in recent:
+            ts = frame.get("timestamp", "")[-8:]  # 只显示时分秒
+            lines = frame.get("production_lines", {})
+            for line_id in ["litho", "etch"]:
+                data = lines.get(line_id, {})
+                if data:
+                    chart_data.append({
+                        "时间": ts,
+                        "产线": data.get("name", line_id),
+                        "良率(%)": round(data.get("yield_rate", 0) * 100, 1),
+                    })
 
-    df = pd.DataFrame(chart_data)
-    if df.empty:
-        return
-    pivot = df.pivot(index="时间", columns="产线", values="良率")
-    st.line_chart(pivot, height=250)
+        if not chart_data:
+            return
+        df = pd.DataFrame(chart_data)
+        pivot = df.pivot(index="时间", columns="产线", values="良率(%)")
+        st.line_chart(pivot, height=150)
+    except Exception:
+        st.caption("图表数据加载中...")
 
 
 def _render_output_chart():
     """渲染产出台账柱状图"""
-    history = st.session_state.simulation_history
-    if not history:
-        return
+    try:
+        history = st.session_state.simulation_history
+        if not history:
+            return
 
-    recent = history[-10:]
-    chart_data = []
-    for frame in recent:
-        ts = frame.get("timestamp", "")
-        lines = frame.get("production_lines", {})
-        for line_id, data in lines.items():
-            val = data.get("output", data.get("throughput", 0))
-            chart_data.append({
-                "时间": ts,
-                "产线": data.get("name", line_id),
-                "产出": val,
-            })
+        recent = history[-10:]
+        chart_data = []
+        for frame in recent:
+            ts = frame.get("timestamp", "")[-8:]
+            lines = frame.get("production_lines", {})
+            for line_id, data in lines.items():
+                if not data:
+                    continue
+                val = data.get("output", data.get("throughput", 0))
+                chart_data.append({
+                    "时间": ts,
+                    "产线": data.get("name", line_id),
+                    "产出": val,
+                })
 
-    df = pd.DataFrame(chart_data)
-    if df.empty:
-        return
-    pivot = df.pivot(index="时间", columns="产线", values="产出")
-    st.bar_chart(pivot, height=200)
+        df = pd.DataFrame(chart_data)
+        if df.empty:
+            return
+        pivot = df.pivot_table(index="时间", columns="产线", values="产出")
+        st.bar_chart(pivot, height=150)
+    except Exception:
+        pass  # 静默失败，图表非关键
 
 
 def _render_event_timeline():
     """渲染事件时间线"""
-    sim = st.session_state.simulation_engine
-    if not sim:
-        return
+    try:
+        sim = st.session_state.simulation_engine
+        if not sim:
+            return
 
-    all_events = sim.event_log[-20:]
-    all_events.reverse()
+        all_events = sim.event_log[-20:]
+        all_events.reverse()
 
-    if not all_events:
-        st.caption("暂无事件记录")
-        return
+        if not all_events:
+            st.caption("暂无事件记录")
+            return
 
-    for ev in all_events:
-        ev_type = ev.get("type", "info")
-        icon = {"alarm": "🚨", "warning": "⚠️", "info": "ℹ️"}.get(ev_type, "📝")
-        st.caption(f"{icon} {ev.get('time', '')} {ev.get('message', '')}")
+        for ev in all_events:
+            ev_type = ev.get("type", "info")
+            icon = {"alarm": "🚨", "warning": "⚠️", "info": "ℹ️"}.get(ev_type, "📝")
+            st.caption(f"{icon} {ev.get('time', '')} {ev.get('message', '')}")
+    except Exception:
+        pass
 
 
 # ─── 仿真生命周期管理（主线程模式，无后台线程）────────────

@@ -9,12 +9,11 @@ import json
 import re
 from config import LLM_CONFIG
 
-# 任务类型定义 — 扩充到9种
+# 任务类型定义 — 扩充到12种
 TASK_TYPES = {
     "retrieval": {
         "keywords": ["搜索", "检索", "查找", "获取", "查询", "爬取", "收集", "数据", "信息",
-                     "新闻", "论文", "报告", "高考", "录取", "志愿", "分数线", "院校", "大学",
-                     "专业", "位次", "投档", "招生"],
+                     "新闻", "论文", "报告"],
         "worker": "retrieval_worker",
         "label": "数据检索",
         "description_template": "检索'{query}'相关数据",
@@ -28,15 +27,14 @@ TASK_TYPES = {
     },
     "ml_prediction": {
         "keywords": ["预测", "趋势", "回归", "分类", "聚类", "机器学习", "深度学习",
-                     "神经网络", "模型", "训练", "拟合", "梯度下降", "房价", "销量"],
+                     "神经网络", "模型", "训练", "拟合", "梯度下降", "销量"],
         "worker": "ml_worker",
         "label": "机器学习",
         "description_template": "基于数据进行机器学习预测分析",
     },
     "algorithm": {
         "keywords": ["优化", "规划", "调度", "最短路径", "排序", "匹配", "推荐",
-                     "投资组合", "分配", "决策", "算法", "路径规划", "最大化", "最小化",
-                     "投资", "策略", "配置", "择时"],
+                     "分配", "决策", "算法", "路径规划", "最大化", "最小化"],
         "worker": "algorithm_worker",
         "label": "算法优化",
         "description_template": "运行优化算法生成方案",
@@ -71,7 +69,7 @@ TASK_TYPES = {
     },
     "strategy": {
         "keywords": ["策略", "建议", "方案", "规划", "决策", "输出", "报告生成",
-                     "推荐", "投资建议", "行动方案", "总结"],
+                     "推荐", "行动方案", "总结"],
         "worker": "strategy_worker",
         "label": "策略输出",
         "description_template": "综合各模块结果，生成最终策略建议",
@@ -90,22 +88,86 @@ TASK_TYPES = {
         "label": "HTTP调用",
         "description_template": "发送HTTP请求调用外部API或抓取网页数据",
     },
+    "production_monitor": {
+        "keywords": ["检测", "监控", "产线", "良率", "产能", "OEE", "状态",
+                     "光刻", "刻蚀", "测试", "异常", "DPPM"],
+        "worker": "production_monitor",
+        "label": "产线监控",
+        "description_template": "读取产线实时数据与历史趋势",
+    },
+    "production_adjuster": {
+        "keywords": ["调整", "补偿", "修改参数", "优化工艺", "调参",
+                     "曝光剂量", "RF功率", "腔室压力"],
+        "worker": "production_adjuster",
+        "label": "产线调整",
+        "description_template": "计算并执行产线工艺参数调整",
+    },
 }
 
-# 预设流程模板 — 支持丰富场景
+# 预设流程模板 — 半导体产线智能监控 + 通用场景
 PRESET_PIPELINES = {
-    "房地产投资分析": {
-        "intent": "房地产投资分析与趋势预测",
+    # ─── 半导体产线场景 ───
+    "产线状态检测": {
+        "intent": "半导体产线状态检测与异常诊断",
         "tasks": [
-            {"task_id": "A", "type": "retrieval", "description": "搜索目标区域历史房价、GDP与人口数据"},
-            {"task_id": "B", "type": "data_processing", "description": "清洗时序数据，处理缺失值与异常点"},
-            {"task_id": "C", "type": "ml_prediction", "description": "基于时序特征训练房价趋势预测模型"},
-            {"task_id": "D", "type": "algorithm", "description": "构建投资组合优化模型（均值-方差）"},
-            {"task_id": "E", "type": "strategy", "description": "综合预测与优化结果，生成投资策略报告"},
-            {"task_id": "F", "type": "report_export", "description": "导出统计表格、Markdown/HTML/PDF 格式报告"},
+            {"task_id": "A", "type": "production_monitor",
+             "description": "读取光刻/刻蚀/测试三条产线当前运行指标和历史趋势数据"},
+            {"task_id": "B", "type": "data_processing",
+             "description": "分析异常趋势：良率下降斜率、OEE波动模式、DPPM变化率"},
+            {"task_id": "C", "type": "strategy",
+             "description": "综合诊断报告：识别异常产线、推断根因、给出处理建议和优先级"},
+            {"task_id": "D", "type": "report_export",
+             "description": "导出产线检测报告（Word/Excel/PDF格式）"},
         ],
-        "dependencies": {"B": ["A"], "C": ["B"], "D": ["C"], "E": ["D"], "F": ["E"]},
+        "dependencies": {"B": ["A"], "C": ["B"], "D": ["C"]},
     },
+    "产线自动调整": {
+        "intent": "半导体产线工艺参数智能调整",
+        "tasks": [
+            {"task_id": "A", "type": "production_monitor",
+             "description": "拉取目标产线近30分钟历史数据和当前工艺参数"},
+            {"task_id": "B", "type": "ml_prediction",
+             "description": "预测当前漂移趋势下未来15分钟的良率变化"},
+            {"task_id": "C", "type": "production_adjuster",
+             "description": "计算最优工艺参数调整量并写入仿真器执行"},
+            {"task_id": "D", "type": "strategy",
+             "description": "调整效果评估：预期恢复时间、风险评估、后续监控建议"},
+            {"task_id": "E", "type": "report_export",
+             "description": "导出调整报告（Word/Excel/PDF格式）"},
+        ],
+        "dependencies": {"B": ["A"], "C": ["B"], "D": ["C"], "E": ["D"]},
+    },
+    "产线综合分析": {
+        "intent": "半导体产线综合运行分析与瓶颈诊断",
+        "tasks": [
+            {"task_id": "A", "type": "production_monitor",
+             "description": "全量采集三条产线运行数据、事件日志和调整历史"},
+            {"task_id": "B", "type": "data_processing",
+             "description": "数据清洗与相关性分析：良率-参数关联、OEE瓶颈识别"},
+            {"task_id": "C", "type": "ml_prediction",
+             "description": "基于历史趋势预测未来2小时良率和产能走势"},
+            {"task_id": "D", "type": "strategy",
+             "description": "综合决策报告：瓶颈排序、维护优先级、产能优化建议"},
+            {"task_id": "E", "type": "report_export",
+             "description": "导出综合分析报告（Word/Excel/PDF格式）"},
+        ],
+        "dependencies": {"B": ["A"], "C": ["B"], "D": ["C"], "E": ["D"]},
+    },
+    "设备故障诊断": {
+        "intent": "半导体设备故障诊断与维护建议",
+        "tasks": [
+            {"task_id": "A", "type": "production_monitor",
+             "description": "读取OEE异常产线的详细设备状态和故障日志"},
+            {"task_id": "B", "type": "algorithm",
+             "description": "故障模式匹配：比对已知故障特征库，识别可能根因"},
+            {"task_id": "C", "type": "strategy",
+             "description": "输出故障诊断报告：根因排序、修复建议、预计恢复时间"},
+            {"task_id": "D", "type": "report_export",
+             "description": "导出故障诊断报告（Word/Excel/PDF格式）"},
+        ],
+        "dependencies": {"B": ["A"], "C": ["B"], "D": ["C"]},
+    },
+    # ─── 通用场景 ───
     "数据中心安全运维": {
         "intent": "数据中心安全巡检与网络优化",
         "tasks": [
@@ -147,16 +209,6 @@ PRESET_PIPELINES = {
         ],
         "dependencies": {"C": ["A", "B"], "D": ["C"]},
     },
-    "高考志愿填报": {
-        "intent": "高考志愿填报分析与院校推荐",
-        "tasks": [
-            {"task_id": "A", "type": "retrieval", "description": "检索目标城市(北京/上海/南京/杭州等)各高校近年录取分数线、位次、优势专业"},
-            {"task_id": "B", "type": "data_processing", "description": "整理录取数据：按院校层次分类(985/211/双一流/省重点)，计算各分数段对应院校"},
-            {"task_id": "C", "type": "algorithm", "description": "基于考生分数和位次，运行匹配算法：冲刺/稳妥/保底三档院校筛选"},
-            {"task_id": "D", "type": "strategy", "description": "综合数据分析与匹配结果，生成个性化志愿填报策略报告与院校推荐清单"},
-        ],
-        "dependencies": {"B": ["A"], "C": ["B"], "D": ["C"]},
-    },
     "数据库迁移": {
         "intent": "数据库架构迁移与性能优化",
         "tasks": [
@@ -186,13 +238,15 @@ class IntentParser:
         """基于规则匹配的意图解析（mock 模式）。"""
         # 先尝试匹配预设模板（关键词组合匹配，命中2个即匹配）
         preset_triggers = {
-            "房地产投资分析": ["房价", "投资", "趋势", "预测", "规划", "房产"],
+            "产线状态检测": ["检测", "产线", "良率", "异常", "状态", "监控", "指标", "运行"],
+            "产线自动调整": ["调整", "补偿", "修改参数", "优化", "曝光", "RF", "功率", "剂量"],
+            "产线综合分析": ["综合", "全面分析", "瓶颈", "报告", "光刻", "刻蚀"],
+            "设备故障诊断": ["故障", "宕机", "OEE", "停机", "维修", "维护"],
             "数据中心安全运维": ["安全", "网络", "扫描", "漏洞", "拓扑", "运维"],
             "数据分析": ["数据", "建模", "清洗", "分析"],
             "智能路由": ["路由", "网络", "拓扑", "负载均衡", "路径"],
             "安全审计": ["安全审计", "合规", "等保", "审计"],
             "数据库迁移": ["数据库", "迁移", "SQL", "查询优化", "索引"],
-            "高考志愿填报": ["高考", "志愿", "录取", "分数线", "院校", "大学", "专业", "分数", "位次", "批次", "投档", "填报", "考生", "浙江", "江苏", "北京", "上海", "南京", "杭州", "985", "211", "双一流"],
         }
         for preset_name, triggers in preset_triggers.items():
             matched = sum(1 for t in triggers if t in user_input)
@@ -271,7 +325,7 @@ class IntentParser:
 - retrieval: 数据检索(搜索/获取/查询数据)
 - data_processing: 数据处理(清洗/ETL/特征工程)
 - ml_prediction: 机器学习(预测/分类/回归/训练模型)
-- algorithm: 算法优化(路径规划/调度/投资组合/决策)
+- algorithm: 算法优化(路径规划/调度/决策)
 - security: 安全分析(漏洞扫描/风险评估/合规审计)
 - code_execution: 代码执行(沙箱运行脚本/编译部署)
 - network: 网络监控(拓扑发现/流量分析/异常检测)
@@ -279,6 +333,8 @@ class IntentParser:
 - strategy: 策略输出(综合建议/最终方案/报告生成)
 - http_request: HTTP调用(调用API/抓取网页/webhook)
 - report_export: 报告导出(生成Word/Excel/PDF文件)
+- production_monitor: 产线监控(读取仿真数据/检测异常/趋势分析)
+- production_adjuster: 产线调整(计算调整量/执行工艺参数修改)
 
 输出严格JSON（不要markdown标记）：
 {
@@ -295,7 +351,8 @@ class IntentParser:
 2. dependencies 中键是后置任务，值是前置任务列表
 3. 最后一步必须是 strategy 类型来生成最终策略
 4. 任务数量3-6个
-5. 可并行的任务用依赖关系体现（无依赖=可并行）"""
+5. 可并行的任务用依赖关系体现（无依赖=可并行）
+6. 半导体产线相关任务优先使用 production_monitor 和 production_adjuster"""
 
         response = client.chat.completions.create(
             model=LLM_CONFIG["model"],

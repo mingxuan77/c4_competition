@@ -52,7 +52,9 @@ TASK_TYPE_MAP = {
     "database":        ("database_worker",   "数据库",   "🗄️"),
     "strategy":        ("strategy_worker",   "策略输出", "📊"),
     "report_export":   ("report_exporter",   "报告导出", "📄"),
-    "http_request":    ("http_worker",       "HTTP调用", "🌐"),
+    "http_request":        ("http_worker",       "HTTP调用", "🌐"),
+    "production_monitor":  ("production_monitor",  "产线监控", "📡"),
+    "production_adjuster": ("production_adjuster", "产线调整", "🔧"),
 }
 
 _workers_cache = None
@@ -70,6 +72,8 @@ def _get_workers():
         from workers.strategy_worker import StrategyWorker
         from workers.report_exporter import ReportExporter
         from workers.http_worker import HTTPWorker
+        from workers.production_monitor import ProductionMonitorWorker
+        from workers.production_adjuster import ProductionAdjusterWorker
         _workers_cache = {
             "retrieval_worker": RetrievalWorker(),
             "data_worker": DataWorker(),
@@ -82,6 +86,8 @@ def _get_workers():
             "strategy_worker": StrategyWorker(),
             "report_exporter": ReportExporter(),
             "http_worker": HTTPWorker(),
+            "production_monitor": ProductionMonitorWorker(),
+            "production_adjuster": ProductionAdjusterWorker(),
         }
     return _workers_cache
 
@@ -283,15 +289,17 @@ def parse_intent_with_langchain(user_input: str) -> dict:
     system_prompt = """你是一个多智能体协同调度系统的任务拆解器。根据用户需求，输出结构化任务流水线。
 
 可用任务类型:
-- retrieval:      数据检索(搜索/获取/查询数据/收集信息)
-- data_processing: 数据处理(清洗/ETL/分类汇总/特征工程)
-- ml_prediction:   机器学习(预测/分类/回归/趋势分析)
-- algorithm:       算法优化(匹配/排序/投资组合/路径规划)
-- security:        安全分析(漏洞扫描/风险评估/合规)
-- code_execution:  代码执行(沙箱)
-- network:         网络监控(拓扑/流量)
-- database:        数据库(查询优化/迁移)
-- strategy:        策略输出(综合建议/报告)
+- retrieval:          数据检索(搜索/获取/查询数据/收集信息)
+- data_processing:     数据处理(清洗/ETL/分类汇总/特征工程)
+- ml_prediction:       机器学习(预测/分类/回归/趋势分析)
+- algorithm:           算法优化(匹配/排序/投资组合/路径规划)
+- security:            安全分析(漏洞扫描/风险评估/合规)
+- code_execution:      代码执行(沙箱)
+- network:             网络监控(拓扑/流量)
+- database:            数据库(查询优化/迁移)
+- strategy:            策略输出(综合建议/报告)
+- production_monitor:  产线监控(读取仿真数据/检测异常/趋势分析)
+- production_adjuster: 产线调整(计算调整量/执行工艺参数修改)
 
 规则:
 1. task_id 必须用单大写字母: A, B, C, D, E, F
@@ -300,6 +308,7 @@ def parse_intent_with_langchain(user_input: str) -> dict:
 4. 任务3-6个
 5. 相似的任务合并为一个(如"检索A数据"+"检索B数据"合并为"检索相关数据")
 6. 必须有 dependencies 字段，即使为空也写 {}
+7. 半导体产线相关任务优先使用 production_monitor 和 production_adjuster
 """
     try:
         structured_llm = llm.with_structured_output(schema, method="function_calling")

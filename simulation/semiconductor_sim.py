@@ -19,38 +19,39 @@ class SemiconductorSimulator:
             name="光刻线 #L1",
             base_output=120.0,
             base_yield=0.965,
-            drift_rate=0.0002,
+            drift_rate=0.002,   # 演示加速：约2分钟可见0.5%漂移
             extra_params={
-                "exposure_dose": 25.0,      # mJ/cm²
-                "focus_offset": 12.5,       # nm
-                "alignment_error": 0.8,     # nm
+                "exposure_dose": 25.0,
+                "focus_offset": 12.5,
+                "alignment_error": 0.8,
             },
         )
 
-        # 刻蚀线：基产95wph, 基良率94.0%, 漂移略快
+        # 刻蚀线：基产95wph, 基良率94.0%, 漂移更快
         self.etch = LineState(
             name="刻蚀线 #E1",
             base_output=95.0,
             base_yield=0.940,
-            drift_rate=0.0003,
+            drift_rate=0.003,   # 演示加速：约2分钟可见0.7%漂移
             extra_params={
-                "rf_power": 500.0,          # W
-                "chamber_pressure": 32.0,   # mTorr
-                "etch_rate": 98.5,          # nm/min
+                "rf_power": 500.0,
+                "chamber_pressure": 32.0,
+                "etch_rate": 98.5,
             },
         )
 
-        # 测试线：LineState用于基础参数，特有指标单独维护
+        # 测试线：随运行时间DPPM自然恶化 + 上游影响
         self.test = LineState(
             name="测试线 #T1",
             base_output=200.0,
-            base_yield=0.0,  # 测试线不使用良率指标
+            base_yield=0.0,
             drift_rate=0.0,
             extra_params={
-                "sampling_rate": 80.0,      # %
-                "test_threshold": 5.0,      # 判定阈值
+                "sampling_rate": 80.0,
+                "test_threshold": 5.0,
             },
         )
+        self._test_base_dppm = 250  # DPPM基线，随时间上升
 
         # 测试线特有指标
         self.test_dppm = 450
@@ -85,11 +86,13 @@ class SemiconductorSimulator:
         upstream_avg_yield = (
             litho_data["yield_rate"] + etch_data["yield_rate"]
         ) / 2
+        # DPPM = 基线 + 时间恶化 + 上游影响 + 随机噪声
+        time_drift = self.elapsed_seconds / 60 * 2  # 每分钟+2 DPPM
         self.test_dppm = int(
-            250
+            self._test_base_dppm + time_drift
             + (1 - litho_data["yield_rate"]) * 1500
             + (1 - etch_data["yield_rate"]) * 1200
-            + random.randint(-20, 20)
+            + random.randint(-15, 15)
         )
         self.test_utilization = min(0.99, max(0.5,
             0.77 + random.uniform(-0.05, 0.05)
@@ -141,13 +144,13 @@ class SemiconductorSimulator:
         }
 
     def _maybe_trigger_events(self) -> list[dict]:
-        """按概率触发异常事件"""
+        """按概率触发异常事件（演示加速：间隔3-5分钟）"""
         events = []
         seconds = self.elapsed_seconds
 
-        # 事件1: 光刻胶老化 — 每30分钟(1800秒)概率检查
-        if seconds % 1800 == 0 and seconds > 0 and random.random() < 0.7:
-            self.litho.base_yield *= 0.96  # 基良率掉4%
+        # 事件1: 光刻胶老化 — 每3分钟(180秒)
+        if seconds % 180 == 0 and seconds > 0 and random.random() < 0.5:
+            self.litho.base_yield *= 0.97  # 基良率掉3%
             event = {
                 "time": time.strftime("%H:%M:%S"),
                 "type": "alarm",
@@ -161,8 +164,8 @@ class SemiconductorSimulator:
             events.append(event)
             self.event_log.append(event)
 
-        # 事件2: 刻蚀速率漂移 — 每45分钟
-        if seconds % 2700 == 0 and seconds > 0 and random.random() < 0.6:
+        # 事件2: 刻蚀速率漂移 — 每4分钟(240秒)
+        if seconds % 240 == 0 and seconds > 0 and random.random() < 0.45:
             direction = random.choice([-1, 1])
             drift_pct = 0.08 * direction
             old_rate = self.etch.params.get("etch_rate", 98.5)
@@ -182,8 +185,8 @@ class SemiconductorSimulator:
             events.append(event)
             self.event_log.append(event)
 
-        # 事件3: 设备OEE突降 — 每60分钟
-        if seconds % 3600 == 0 and seconds > 0 and random.random() < 0.5:
+        # 事件3: 设备OEE突降 — 每5分钟(300秒)
+        if seconds % 300 == 0 and seconds > 0 and random.random() < 0.4:
             target = random.choice([self.litho, self.etch])
             target.current_oee = random.uniform(0.45, 0.58)
             line_name = "litho" if target is self.litho else "etch"
@@ -196,6 +199,23 @@ class SemiconductorSimulator:
                     f"{target.current_oee*100:.1f}% — 疑似待料或小停机频发"
                 ),
                 "suggested_action": "建议PM排程检查 + 调整WIP上限",
+            }
+            events.append(event)
+            self.event_log.append(event)
+
+        # 事件4: 测试线微波动 — 每2分钟
+        if seconds % 120 == 0 and seconds > 0 and random.random() < 0.55:
+            spike = random.randint(50, 150)
+            self.test_dppm += spike
+            event = {
+                "time": time.strftime("%H:%M:%S"),
+                "type": "warning",
+                "line": "test",
+                "message": (
+                    f"[警告] 测试线DPPM波动 +{spike} "
+                    f"— 当前: {self.test_dppm}"
+                ),
+                "suggested_action": "检查上游工艺参数是否需要调整",
             }
             events.append(event)
             self.event_log.append(event)

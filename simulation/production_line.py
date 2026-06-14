@@ -51,8 +51,8 @@ class LineState:
             0.85 + random.uniform(-0.07, 0.05)
         ))
 
-        # 2. 工艺漂移：良率随时间缓慢下降
-        drift_loss = elapsed_hours * self.drift_rate
+        # 2. 工艺漂移：良率随时间下降（演示加速：系数x30，2-3分钟可见效）
+        drift_loss = elapsed_hours * self.drift_rate * 30
         self.current_yield = max(0.01, self.current_yield - drift_loss)
 
         # 3. 恢复趋势（如果Agent做了调整）

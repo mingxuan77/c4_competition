@@ -586,13 +586,6 @@ def _render_monitoring_dashboard():
         except Exception as e:
             st.caption(f"图表加载失败: {e}")
 
-        # === 产出台账 ===
-        st.subheader("📊 产出台账")
-        try:
-            _render_output_chart()
-        except Exception:
-            st.caption("产出图表加载中...")
-
         # === 事件时间线 ===
         st.subheader("⚡ 事件时间线")
         try:
@@ -795,36 +788,6 @@ def _render_yield_chart():
     except Exception:
         st.caption("图表数据加载中...")
 
-
-def _render_output_chart():
-    """渲染产出台账柱状图"""
-    try:
-        history = st.session_state.simulation_history
-        if not history:
-            return
-
-        recent = history[-10:]
-        chart_data = []
-        for frame in recent:
-            ts = frame.get("timestamp", "")[-8:]
-            lines = frame.get("production_lines", {})
-            for line_id, data in lines.items():
-                if not data:
-                    continue
-                val = data.get("output", data.get("throughput", 0))
-                chart_data.append({
-                    "时间": ts,
-                    "产线": data.get("name", line_id),
-                    "产出": val,
-                })
-
-        df = pd.DataFrame(chart_data)
-        if df.empty:
-            return
-        pivot = df.pivot_table(index="时间", columns="产线", values="产出")
-        st.bar_chart(pivot, height=150)
-    except Exception:
-        pass  # 静默失败，图表非关键
 
 
 def _render_event_timeline():

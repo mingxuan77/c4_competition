@@ -246,7 +246,7 @@ for key, default in DEFAULTS.items():
 # ─── 辅助函数 ───────────────────────────────────────────────
 
 def build_workflow_response(user_input: str, intent_result: dict, tasks: list, results: dict):
-    """将工作流执行结果组装成简洁的结论报告。返回 (html, files)。"""
+    """将工作流执行结果组装成简洁的文本结论。返回 (html, files)。"""
     total = len(results)
     success = sum(1 for r in results.values() if r.get("status") == "success")
     failed = sum(1 for r in results.values() if r.get("status") == "failed")
@@ -328,7 +328,8 @@ def build_workflow_response(user_input: str, intent_result: dict, tasks: list, r
         lines.append(f'<h3>📊 {intent_result.get("intent", "分析完成")}</h3>')
         clean_output = final_output
         if len(clean_output) > 2000:
-            clean_output = clean_output[:2000] + "\n\n...(完整报告请下载Word文件)"
+            suffix = "\n\n...(完整报告请下载Word文件)" if has_export else "\n\n...(内容已截断)"
+            clean_output = clean_output[:2000] + suffix
         lines.append(
             f'<div style="margin-top:8px;padding:12px;background:#fafbfc;'
             f'border-radius:8px;font-size:0.9rem;line-height:1.6;">'
@@ -550,14 +551,19 @@ def _render_monitoring_dashboard():
         auto_enabled = st.toggle(
             "🔁 自动检测调整",
             value=st.session_state.auto_check_enabled,
-            help="开启后每N分钟自动检测产线异常并执行轻量级调整"
+            help="开启后每N秒自动检测产线异常并执行轻量级调整"
         )
         st.session_state.auto_check_enabled = auto_enabled
-        interval_min = st.selectbox(
-            "间隔(分钟)", [3, 5, 10], index=1,
+        interval_options = SIMULATION_CONFIG["auto_check_intervals"]
+        default_interval = SIMULATION_CONFIG["auto_check_default_interval"]
+        interval_seconds = st.selectbox(
+            "间隔(秒)",
+            interval_options,
+            index=interval_options.index(default_interval),
+            format_func=lambda seconds: f"{seconds} 秒",
             key="auto_interval_selector", label_visibility="collapsed"
         )
-        st.session_state.auto_check_interval = interval_min * 60
+        st.session_state.auto_check_interval = interval_seconds
     with ctrl_col3:
         if st.session_state.simulation_engine:
             elapsed = st.session_state.simulation_engine.elapsed_seconds

@@ -297,18 +297,20 @@ def parse_intent_with_langchain(user_input: str) -> dict:
 - code_execution:      代码执行(沙箱)
 - network:             网络监控(拓扑/流量)
 - database:            数据库(查询优化/迁移)
-- strategy:            策略输出(综合建议/报告)
+- strategy:            策略输出(综合建议/文本结论)
+- report_export:       报告导出(生成Word报告文件)
 - production_monitor:  产线监控(读取仿真数据/检测异常/趋势分析)
 - production_adjuster: 产线调整(计算调整量/执行工艺参数修改)
 
 规则:
 1. task_id 必须用单大写字母: A, B, C, D, E, F
 2. dependencies 中每个键指向其前置任务列表，如 {"B": ["A"], "C": ["A","B"]}
-3. 最后一步必须是 strategy 类型
+3. 分析任务最后一步使用 strategy 类型输出正常文本结论
 4. 任务3-6个
 5. 相似的任务合并为一个(如"检索A数据"+"检索B数据"合并为"检索相关数据")
 6. 必须有 dependencies 字段，即使为空也写 {}
 7. 半导体产线相关任务优先使用 production_monitor 和 production_adjuster
+8. 只有用户明确要求生成、导出或下载报告文件时，才添加 report_export 任务
 """
     try:
         structured_llm = llm.with_structured_output(schema, method="function_calling")
@@ -326,18 +328,28 @@ def parse_intent_with_langchain(user_input: str) -> dict:
                 "params": {},
             })
 
-        # 确保最后有 report_export 任务（生成可下载文件）
-        has_export = any(t["task_type"] == "report_export" for t in tasks)
-        has_strategy = any(t["task_type"] == "strategy" for t in tasks)
-        if not has_export:
-            last_id = max((t["task_id"] for t in tasks), key=lambda x: ord(x[0]) if x else 0)
-            next_id = chr(ord(last_id) + 1) if last_id else "F"
-            export_deps = [last_id]
+        from meta_agent.intent_parser import user_requests_report
+
+        wants_report = user_requests_report(user_input)
+        report_tasks = [task for task in tasks if task["task_type"] == "report_export"]
+        removed_ids = {task["task_id"] for task in report_tasks}
+        tasks = [task for task in tasks if task["task_type"] != "report_export"]
+        for task in tasks:
+            task["deps"] = [dep for dep in task.get("deps", []) if dep not in removed_ids]
+
+        if wants_report:
+            last_id = tasks[-1]["task_id"] if tasks else None
+            max_id = max(
+                (task["task_id"] for task in tasks),
+                key=lambda task_id: ord(task_id[0]),
+                default=None,
+            )
+            next_id = chr(ord(max_id[0]) + 1) if max_id else "A"
             tasks.append({
                 "task_id": next_id,
                 "task_type": "report_export",
-                "description": "将分析结果导出为Word/Excel/PDF报告文件",
-                "deps": export_deps,
+                "description": "将分析结果导出为Word报告文件",
+                "deps": [last_id] if last_id else [],
                 "params": {"title": result.get("intent", "分析报告")},
             })
 

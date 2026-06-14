@@ -4,6 +4,7 @@ import time
 import random
 import threading
 from simulation.production_line import LineState
+from config import SIMULATION_CONFIG
 
 
 class SemiconductorSimulator:
@@ -144,12 +145,13 @@ class SemiconductorSimulator:
         }
 
     def _maybe_trigger_events(self) -> list[dict]:
-        """按概率触发异常事件（演示加速：间隔3-5分钟）"""
+        """按概率触发异常事件（演示加速：20-40秒进入检查点）"""
         events = []
         seconds = self.elapsed_seconds
 
-        # 事件1: 光刻胶老化 — 每2分钟(120秒)
-        if seconds % 120 == 0 and seconds > 0 and random.random() < 0.45:
+        # 事件1: 光刻胶老化
+        litho_interval = SIMULATION_CONFIG["litho_event_interval_seconds"]
+        if seconds % litho_interval == 0 and seconds > 0 and random.random() < 0.45:
             self.litho.base_yield *= 0.97  # 基良率掉3%
             event = {
                 "time": time.strftime("%H:%M:%S"),
@@ -164,8 +166,9 @@ class SemiconductorSimulator:
             events.append(event)
             self.event_log.append(event)
 
-        # 事件2: 刻蚀速率漂移 — 每2.5分钟(150秒)
-        if seconds % 150 == 0 and seconds > 0 and random.random() < 0.4:
+        # 事件2: 刻蚀速率漂移
+        etch_interval = SIMULATION_CONFIG["etch_event_interval_seconds"]
+        if seconds % etch_interval == 0 and seconds > 0 and random.random() < 0.4:
             direction = random.choice([-1, 1])
             drift_pct = 0.08 * direction
             old_rate = self.etch.params.get("etch_rate", 98.5)
@@ -185,8 +188,9 @@ class SemiconductorSimulator:
             events.append(event)
             self.event_log.append(event)
 
-        # 事件3: 设备OEE突降 — 每3分钟(180秒)
-        if seconds % 180 == 0 and seconds > 0 and random.random() < 0.35:
+        # 事件3: 设备OEE突降
+        oee_interval = SIMULATION_CONFIG["oee_event_interval_seconds"]
+        if seconds % oee_interval == 0 and seconds > 0 and random.random() < 0.35:
             target = random.choice([self.litho, self.etch])
             target.current_oee = random.uniform(0.45, 0.58)
             line_name = "litho" if target is self.litho else "etch"
@@ -203,8 +207,9 @@ class SemiconductorSimulator:
             events.append(event)
             self.event_log.append(event)
 
-        # 事件4: 测试线微波动 — 每2分钟
-        if seconds % 120 == 0 and seconds > 0 and random.random() < 0.55:
+        # 事件4: 测试线微波动
+        test_interval = SIMULATION_CONFIG["test_event_interval_seconds"]
+        if seconds % test_interval == 0 and seconds > 0 and random.random() < 0.55:
             spike = random.randint(50, 150)
             self.test_dppm += spike
             event = {

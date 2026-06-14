@@ -7,7 +7,64 @@
 
 import json
 import re
+from copy import deepcopy
 from config import LLM_CONFIG
+
+
+REPORT_REQUEST_PATTERNS = [
+    r"(?:生成|制作|创建|撰写|编写|输出|导出|下载|打印|保存).{0,10}(?:报告|报表|文档|Word|PDF|Excel)",
+    r"(?:报告|报表|文档|Word|PDF|Excel).{0,10}(?:生成|制作|创建|撰写|编写|输出|导出|下载|打印|保存)",
+    r"(?:给我|帮我|需要|想要|要).{0,6}(?:一份|一个)?(?:报告|报表|Word|PDF|Excel)",
+]
+
+
+def user_requests_report(user_input: str) -> bool:
+    """仅在用户明确要求生成或导出报告文件时返回 True。"""
+    text = user_input.strip()
+    return any(re.search(pattern, text, re.IGNORECASE) for pattern in REPORT_REQUEST_PATTERNS)
+
+
+def apply_report_policy(intent_result: dict, user_input: str) -> dict:
+    """根据用户原始指令保留、移除或追加报告导出任务。"""
+    result = deepcopy(intent_result)
+    tasks = result.get("tasks", [])
+    dependencies = deepcopy(result.get("dependencies", {}))
+    wants_report = user_requests_report(user_input)
+    report_tasks = [task for task in tasks if task.get("type") == "report_export"]
+    removed_ids = {task["task_id"] for task in report_tasks}
+    normal_tasks = [task for task in tasks if task.get("type") != "report_export"]
+    dependencies = {
+        task_id: [dep for dep in deps if dep not in removed_ids]
+        for task_id, deps in dependencies.items()
+        if task_id not in removed_ids
+    }
+
+    if not wants_report:
+        result["tasks"] = normal_tasks
+        result["dependencies"] = dependencies
+        return result
+
+    last_id = normal_tasks[-1]["task_id"] if normal_tasks else None
+    max_id = max(
+        (task["task_id"] for task in normal_tasks),
+        key=lambda task_id: ord(task_id[0]),
+        default=None,
+    )
+    next_id = chr(ord(max_id[0]) + 1) if max_id else "A"
+    report_task = deepcopy(report_tasks[0]) if report_tasks else {}
+    report_task.update({
+        "task_id": next_id,
+        "type": "report_export",
+        "description": "将分析结果导出为Word报告文件",
+    })
+    report_task.setdefault("params", {"title": result.get("intent", "分析报告")})
+    normal_tasks.append(report_task)
+    if last_id:
+        dependencies[next_id] = [last_id]
+
+    result["tasks"] = normal_tasks
+    result["dependencies"] = dependencies
+    return result
 
 # 任务类型定义 — 扩充到12种
 TASK_TYPES = {
@@ -266,7 +323,7 @@ class IntentParser:
         for preset_name, triggers in preset_triggers.items():
             matched = sum(1 for t in triggers if t in user_input)
             if matched >= 2:
-                return PRESET_PIPELINES[preset_name]
+                return apply_report_policy(PRESET_PIPELINES[preset_name], user_input)
 
         # 动态识别
         detected_types = []
@@ -277,7 +334,7 @@ class IntentParser:
         detected_types.sort(key=lambda x: x[1], reverse=True)
 
         if not detected_types:
-            return PRESET_PIPELINES["数据分析"]
+            return apply_report_policy(PRESET_PIPELINES["数据分析"], user_input)
 
         tasks = []
         deps = {}
@@ -307,23 +364,12 @@ class IntentParser:
                 deps[tid] = [prev_id]
             prev_id = tid
 
-        # 始终追加报告导出任务
-        has_export = any(t['type'] == 'report_export' for t in tasks)
-        if not has_export:
-            tid = chr(ord("A") + len(tasks))
-            tasks.append({
-                "task_id": tid,
-                "type": "report_export",
-                "description": "将分析结果导出为Word/Excel/PDF报告文件",
-            })
-            if prev_id:
-                deps[tid] = [prev_id]
-
-        return {
+        result = {
             "intent": f"基于输入'{user_input[:30]}...'的复合任务",
             "tasks": tasks,
             "dependencies": deps,
         }
+        return apply_report_policy(result, user_input)
 
     def _parse_with_llm(self, user_input: str) -> dict:
         """调用 DeepSeek API 进行意图解析。"""
@@ -364,10 +410,11 @@ class IntentParser:
 规则:
 1. task_id 用大写字母 A,B,C...
 2. dependencies 中键是后置任务，值是前置任务列表
-3. 最后一步必须是 strategy 类型来生成最终策略
+3. 分析任务最后一步使用 strategy 类型生成正常文本结论
 4. 任务数量3-6个
 5. 可并行的任务用依赖关系体现（无依赖=可并行）
-6. 半导体产线相关任务优先使用 production_monitor 和 production_adjuster"""
+6. 半导体产线相关任务优先使用 production_monitor 和 production_adjuster
+7. 只有用户明确要求生成、导出或下载报告文件时，才添加 report_export 任务"""
 
         response = client.chat.completions.create(
             model=LLM_CONFIG["model"],
@@ -382,4 +429,4 @@ class IntentParser:
         content = response.choices[0].message.content.strip()
         content = re.sub(r"^```(?:json)?\s*", "", content)
         content = re.sub(r"\s*```$", "", content)
-        return json.loads(content)
+        return apply_report_policy(json.loads(content), user_input)

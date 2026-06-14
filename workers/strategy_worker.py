@@ -54,7 +54,7 @@ class StrategyWorker(BaseWorker):
 
         if llm_output:
             result["strategy"] = {
-                "title": "综合分析报告",
+                "title": "综合分析结果",
                 "executive_summary": llm_output[:800],
                 "recommendations": [],
                 "risk_assessment": {"overall_risk_level": "详见分析"},
@@ -64,6 +64,6 @@ class StrategyWorker(BaseWorker):
         else:
             result["output"] = (
                 f"[策略输出] 基于 {len(upstream)} 个上游Agent的分析结果，"
-                f"综合建议已生成。请查看报告导出文件获取详细内容。"
+                f"已生成综合分析结论与建议。"
             )
         return result

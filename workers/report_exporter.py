@@ -50,11 +50,13 @@ class ReportExporter(BaseWorker):
             generated_files.extend(docx_result.get("files", []))
 
         file_names = [f.replace("\\", "/").split("/")[-1] for f in generated_files]
-        file_list = "\n".join(f"- {n}" for n in file_names) if file_names else "（无文件生成）"
 
         result = {"worker": self.name}
-        result["output"] = (
-            f"✅ 报告已生成: {', '.join(file_names)}" if file_names else "报告生成失败"
-        )
+        if file_names:
+            result["output"] = f"✅ 报告已生成: {', '.join(file_names)}"
+        else:
+            error = docx_result.get("error") or "未返回具体错误"
+            result["output"] = f"报告生成失败：{error}"
+            result["error"] = error
         result["generated_files"] = generated_files
         return result

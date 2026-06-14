@@ -59,8 +59,8 @@ WORKER_CONFIG = {
 SIMULATION_CONFIG = {
     "tick_interval_seconds": 1,     # 仿真帧间隔
     "history_max_frames": 300,      # 最大保留历史帧数（5分钟）
-    "auto_check_default_interval": 300,  # 自动检测默认间隔（秒）
-    "auto_check_intervals": [180, 300, 600],  # 可选间隔: 3/5/10分钟
+    "auto_check_default_interval": 120,  # 自动检测默认间隔（秒）
+    "auto_check_intervals": [60, 120, 180],  # 可选间隔: 1/2/3分钟
     "yield_warning_threshold": 0.03,  # 良率警告阈值（下降3%触发）
     "yield_alarm_threshold": 0.05,   # 良率告警阈值（下降5%触发）
     "oee_alarm_threshold": 0.60,     # OEE告警阈值

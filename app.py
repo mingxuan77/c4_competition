@@ -245,19 +245,18 @@ for key, default in DEFAULTS.items():
 
 # ─── 辅助函数 ───────────────────────────────────────────────
 
-def build_workflow_response(user_input: str, intent_result: dict, tasks: list, results: dict) -> str:
-    """将工作流执行结果组装成简洁的结论报告。"""
+def build_workflow_response(user_input: str, intent_result: dict, tasks: list, results: dict):
+    """将工作流执行结果组装成简洁的结论报告。返回 (html, files)。"""
     total = len(results)
     success = sum(1 for r in results.values() if r.get("status") == "success")
     failed = sum(1 for r in results.values() if r.get("status") == "failed")
 
-    # 判断任务类型：调整类 vs 分析类
+    # 判断任务类型
     task_types = [t.get("task_type", "") for t in tasks]
-    is_adjustment = "production_adjuster" in task_types
-    is_monitor_only = task_types == ["production_monitor"] or (
-        len(task_types) <= 3 and "production_monitor" in task_types
-        and "production_adjuster" not in task_types
-    )
+    has_adjuster = "production_adjuster" in task_types
+    has_strategy = "strategy" in task_types
+    has_export = "report_export" in task_types
+    is_quick_action = has_adjuster and not has_strategy  # 快速调整，无需报告
 
     # 提取 strategy worker 的结论
     final_output = ""
@@ -295,50 +294,73 @@ def build_workflow_response(user_input: str, intent_result: dict, tasks: list, r
         # 取最后一个成功agent的输出作为最终结论
         final_output = raw_output
 
+    # ── 收集生成的文件 ──
+    generated_files = []
+    for r in results.values():
+        if r.get("status") == "success":
+            rd = r.get("result", {})
+            if isinstance(rd, dict):
+                files = rd.get("generated_files", [])
+                generated_files.extend(files)
+
     # ── 构建HTML卡片 ──
     lines = ['<div class="workflow-card">']
 
-    if is_adjustment and adjustment_result:
-        # 调整类任务：紧凑的调整确认卡片
-        lines.append(f'<h3>🔧 产线调整完成</h3>')
-        for adj in adjustment_result:
+    if is_quick_action:
+        # 快速调整：一句话确认
+        lines.append(f'<h3>🔧 已执行</h3>')
+        if adjustment_result:
+            for adj in adjustment_result:
+                lines.append(
+                    f'<p>✅ {adj.get("line", "")}.{adj.get("param", "")}: '
+                    f'{adj.get("old_value", "?")} → <strong>{adj.get("new_value", "?")}</strong>'
+                    f' — {adj.get("reason", "")}</p>'
+                )
             lines.append(
-                f'<p>✅ <strong>{adj.get("line", "")}.{adj.get("param", "")}</strong>: '
-                f'{adj.get("old_value", "?")} → <strong>{adj.get("new_value", "?")}</strong>'
-                f' — {adj.get("reason", "")}</p>'
+                f'<p style="color:#667788;font-size:0.82rem;">'
+                f'预计2分钟内见效，可切到监控页观察趋势</p>'
             )
+        elif final_output:
+            clean = final_output[:600]
+            lines.append(f'<p>{clean.replace(chr(10), "<br/>")}</p>')
+    elif has_strategy and final_output:
+        # 分析类任务：结论 + 下载
+        lines.append(f'<h3>📊 {intent_result.get("intent", "分析完成")}</h3>')
+        clean_output = final_output
+        if len(clean_output) > 2000:
+            clean_output = clean_output[:2000] + "\n\n...(完整报告请下载Word文件)"
         lines.append(
-            f'<p style="color:#667788;font-size:0.85rem;">'
-            f'共调度 {total} 个Agent协同完成 | 预计2分钟内见效</p>'
+            f'<div style="margin-top:8px;padding:12px;background:#fafbfc;'
+            f'border-radius:8px;font-size:0.9rem;line-height:1.6;">'
+            f'{clean_output.replace(chr(10), "<br/>")}'
+            f'</div>'
         )
     else:
-        # 分析类任务：简洁结论
-        lines.append(f'<h3>📊 {intent_result.get("intent", "分析完成")}</h3>')
-
-        # 紧凑的Agent步骤摘要
-        lines.append(
-            f'<p style="color:#667788;font-size:0.82rem;">'
-            f'调度 {total} 个Agent协同完成 → '
-            + " → ".join(f'{s["type_label"]}' for s in agent_steps)
-            + f'</p>'
-        )
-
-        # 最终结论（取strategy agent的输出，截断过长内容）
+        # 纯检测：简洁状态摘要
+        lines.append(f'<h3>📡 产线状态</h3>')
         if final_output:
-            # 清理markdown标题，保留纯文本
-            clean_output = final_output
-            # 限制长度
-            if len(clean_output) > 1500:
-                clean_output = clean_output[:1500] + "\n\n...(内容已截断，完整报告请下载文件)"
+            clean = final_output[:1000]
+            lines.append(f'<p>{clean.replace(chr(10), "<br/>")}</p>')
+
+    # ── 下载按钮（仅分析类任务有导出文件时）──
+    if generated_files:
+        lines.append(
+            f'<div style="margin-top:12px;padding-top:10px;'
+            f'border-top:1px solid #e8ecf2;">'
+        )
+        for fpath in generated_files:
+            fname = fpath.replace("\\", "/").split("/")[-1]
             lines.append(
-                f'<div style="margin-top:12px;padding:12px;background:#fafbfc;'
-                f'border-radius:8px;font-size:0.9rem;line-height:1.6;">'
-                f'{clean_output.replace(chr(10), "<br/>")}'
-                f'</div>'
+                f'<a href="/?download={fpath}" '
+                f'style="display:inline-block;padding:6px 14px;'
+                f'background:#5b4ae0;color:#fff;border-radius:6px;'
+                f'text-decoration:none;font-size:0.82rem;margin-right:8px;">'
+                f'📥 下载 {fname}</a>'
             )
+        lines.append('</div>')
 
     lines.append('</div>')
-    return "\n".join(lines)
+    return "\n".join(lines), generated_files
 
 
 def render_intent_visualization(intent_result: dict, tasks: list[dict] | None = None):
@@ -505,7 +527,9 @@ def execute_workflow(user_input: str, status_callback=None) -> tuple[str, dict, 
     if status_callback:
         status_callback("📦 结果汇总中...", 95, logs, intent_result, tasks)
 
-    response = build_workflow_response(user_input, intent_result, tasks, results)
+    response, wf_files = build_workflow_response(user_input, intent_result, tasks, results)
+    # 将生成的文件路径注入 results，供 UI 下载使用
+    results["_generated_files"] = wf_files
     if status_callback:
         status_callback("✅ 工作流执行完成", 100, logs, intent_result, tasks)
     return response, results, tasks, logs, intent_result
@@ -1049,8 +1073,29 @@ with col_main:
                 # 工作流结果用自定义卡片展示
                 with st.chat_message("assistant", avatar="🤖"):
                     st.markdown(content, unsafe_allow_html=True)
+
+                    # ── 文件下载按钮（附在气泡下方）──
+                    wf_results = msg.get("workflow_results", {})
+                    gen_files = wf_results.get("_generated_files", []) if isinstance(wf_results, dict) else []
+                    if gen_files:
+                        for fpath in gen_files:
+                            fname = fpath.replace("\\", "/").split("/")[-1]
+                            try:
+                                with open(fpath, "rb") as f:
+                                    fdata = f.read()
+                                ext = fname.rsplit(".", 1)[-1] if "." in fname else ""
+                                st.download_button(
+                                    label=f"📥 下载 {fname}",
+                                    data=fdata,
+                                    file_name=fname,
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document" if ext == "docx" else "application/octet-stream",
+                                    key=f"dl_msg_{fname}",
+                                )
+                            except Exception:
+                                pass
+
                     if msg.get("workflow_results"):
-                        with st.expander("📋 查看执行详情与各Agent输出", expanded=False):
+                        with st.expander("📋 查看执行详情", expanded=False):
                             results = msg["workflow_results"]
                             tasks = msg.get("workflow_tasks", [])
 

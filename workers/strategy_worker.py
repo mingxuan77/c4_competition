@@ -20,30 +20,35 @@ class StrategyWorker(BaseWorker):
                 if output:
                     upstream_text += f"\n\n### {agent_id} 分析结果:\n{output}"
 
-        # 构建给LLM的完整输入
+        # 判断是否为产线相关任务
+        is_production = any(kw in desc for kw in ["产线", "光刻", "刻蚀", "测试", "良率", "产能", "DPPM", "OEE"])
+
         if upstream_text:
+            if is_production:
+                system_prompt = (
+                    "你是半导体制造工艺工程师。基于产线监控数据，聚焦实际状况给出分析。"
+                    "要求：\n"
+                    "1. 直接分析当前三条产线的状态数据，指出具体异常指标和数值\n"
+                    "2. 给出1-3条针对性建议，每条必须具体到产线+参数+调整量\n"
+                    "3. 不要讲套话、不要重复数据摘要、不要写'调度了X个Agent'之类的元信息\n"
+                    "4. 字数控制在500-800字，简洁专业"
+                )
+            else:
+                system_prompt = (
+                    "你是策略分析师。基于上游分析结果，给出具体可操作的建议。"
+                    "要求：简洁直接，用数据说话，500-800字。"
+                )
             llm_output = self._call_llm(
-                system_prompt=(
-                    "你是一个资深的策略分析师。请基于上游多个专业Agent的分析结果，"
-                    "生成一份全面的综合策略报告。要求：\n"
-                    "1. 先总结各Agent的关键发现（2-3句话概述）\n"
-                    "2. 列出3-5条具体的、可操作的策略建议，每条包含行动方案和理由\n"
-                    "3. 评估主要风险和缓解措施\n"
-                    "4. 用具体数据和事实支撑结论，不要空洞的套话\n"
-                    "5. 输出2000-4000字，确保内容完整不截断"
-                ),
+                system_prompt=system_prompt,
                 user_prompt=(
                     f"任务: {desc}\n\n"
                     f"上游分析结果汇总:\n{upstream_text}\n\n"
-                    f"请基于以上所有分析，生成综合策略报告。"
+                    f"请基于以上数据给出分析结论。"
                 ),
             )
         else:
             llm_output = self._call_llm(
-                system_prompt=(
-                    "你是策略分析师。根据任务描述给出具体策略建议，"
-                    "每条建议包含行动方案和理由。输出1000-2000字，确保内容完整。"
-                ),
+                system_prompt="你是策略分析师。根据任务描述给出简洁建议。200-500字。",
                 user_prompt=f"任务: {desc}",
             )
 

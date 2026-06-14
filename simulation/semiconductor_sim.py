@@ -148,8 +148,8 @@ class SemiconductorSimulator:
         events = []
         seconds = self.elapsed_seconds
 
-        # 事件1: 光刻胶老化 — 每3分钟(180秒)
-        if seconds % 180 == 0 and seconds > 0 and random.random() < 0.5:
+        # 事件1: 光刻胶老化 — 每2分钟(120秒)
+        if seconds % 120 == 0 and seconds > 0 and random.random() < 0.45:
             self.litho.base_yield *= 0.97  # 基良率掉3%
             event = {
                 "time": time.strftime("%H:%M:%S"),
@@ -164,8 +164,8 @@ class SemiconductorSimulator:
             events.append(event)
             self.event_log.append(event)
 
-        # 事件2: 刻蚀速率漂移 — 每4分钟(240秒)
-        if seconds % 240 == 0 and seconds > 0 and random.random() < 0.45:
+        # 事件2: 刻蚀速率漂移 — 每2.5分钟(150秒)
+        if seconds % 150 == 0 and seconds > 0 and random.random() < 0.4:
             direction = random.choice([-1, 1])
             drift_pct = 0.08 * direction
             old_rate = self.etch.params.get("etch_rate", 98.5)
@@ -185,8 +185,8 @@ class SemiconductorSimulator:
             events.append(event)
             self.event_log.append(event)
 
-        # 事件3: 设备OEE突降 — 每5分钟(300秒)
-        if seconds % 300 == 0 and seconds > 0 and random.random() < 0.4:
+        # 事件3: 设备OEE突降 — 每3分钟(180秒)
+        if seconds % 180 == 0 and seconds > 0 and random.random() < 0.35:
             target = random.choice([self.litho, self.etch])
             target.current_oee = random.uniform(0.45, 0.58)
             line_name = "litho" if target is self.litho else "etch"

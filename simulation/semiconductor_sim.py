@@ -86,10 +86,10 @@ class SemiconductorSimulator:
             litho_data["yield_rate"] + etch_data["yield_rate"]
         ) / 2
         self.test_dppm = int(
-            300
-            + (1 - litho_data["yield_rate"]) * 3000
-            + (1 - etch_data["yield_rate"]) * 2500
-            + random.randint(-30, 30)
+            250
+            + (1 - litho_data["yield_rate"]) * 1500
+            + (1 - etch_data["yield_rate"]) * 1200
+            + random.randint(-20, 20)
         )
         self.test_utilization = min(0.99, max(0.5,
             0.77 + random.uniform(-0.05, 0.05)

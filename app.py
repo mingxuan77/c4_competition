@@ -723,18 +723,19 @@ def _render_adjustment_log():
 
 
 def _render_yield_chart():
-    """渲染良率趋势折线图（紧凑版）"""
+    """渲染良率趋势折线图（Altair，Y轴90-100%聚焦）"""
     try:
+        import altair as alt
+
         history = st.session_state.simulation_history
         if not history or len(history) < 2:
             st.caption("等待数据...")
             return
 
-        # 只取最近30帧，避免图表过长
-        recent = history[-30:]
+        recent = history[-40:]
         chart_data = []
         for frame in recent:
-            ts = frame.get("timestamp", "")[-8:]  # 只显示时分秒
+            ts = frame.get("timestamp", "")[-8:]
             lines = frame.get("production_lines", {})
             for line_id in ["litho", "etch"]:
                 data = lines.get(line_id, {})
@@ -742,14 +743,55 @@ def _render_yield_chart():
                     chart_data.append({
                         "时间": ts,
                         "产线": data.get("name", line_id),
-                        "良率(%)": round(data.get("yield_rate", 0) * 100, 1),
+                        "良率": round(data.get("yield_rate", 0) * 100, 1),
                     })
 
         if not chart_data:
             return
         df = pd.DataFrame(chart_data)
-        pivot = df.pivot(index="时间", columns="产线", values="良率(%)")
-        st.line_chart(pivot, height=150)
+
+        y_min = max(85, df["良率"].min() - 0.5)
+
+        chart = (
+            alt.Chart(df)
+            .mark_line(point=False)
+            .encode(
+                x=alt.X("时间:N", title=None, sort=None),
+                y=alt.Y("良率:Q", title="良率 (%)",
+                       scale=alt.Scale(domain=[y_min, 100])),
+                color=alt.Color("产线:N",
+                               scale=alt.Scale(
+                                   domain=["光刻线 #L1", "刻蚀线 #E1"],
+                                   range=["#5b4ae0", "#00a8a8"])),
+            )
+            .properties(height=160)
+            .configure_axis(gridColor="#f0f0f0")
+            .configure_view(strokeWidth=0)
+        )
+        st.altair_chart(chart, use_container_width=True)
+    except ImportError:
+        try:
+            history = st.session_state.simulation_history
+            if not history or len(history) < 2:
+                return
+            recent = history[-30:]
+            chart_data = []
+            for frame in recent:
+                ts = frame.get("timestamp", "")[-8:]
+                lines = frame.get("production_lines", {})
+                for line_id in ["litho", "etch"]:
+                    data = lines.get(line_id, {})
+                    if data:
+                        chart_data.append({
+                            "时间": ts,
+                            "产线": data.get("name", line_id),
+                            "良率(%)": round(data.get("yield_rate", 0) * 100, 1),
+                        })
+            df = pd.DataFrame(chart_data)
+            pivot = df.pivot(index="时间", columns="产线", values="良率(%)")
+            st.line_chart(pivot, height=150)
+        except Exception:
+            st.caption("图表数据加载中...")
     except Exception:
         st.caption("图表数据加载中...")
 

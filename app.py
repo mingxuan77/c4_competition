@@ -1,11 +1,16 @@
-"""跨域分布式多智能体协同调度系统 — Chat 主入口"""
+"""半导体产线智能监控与决策系统 — Chat 主入口"""
 
 import streamlit as st
 import time
+import threading
+import pandas as pd
+
+from simulation.semiconductor_sim import SemiconductorSimulator
+from config import SIMULATION_CONFIG
 
 st.set_page_config(
-    page_title="多智能体协同调度系统",
-    page_icon="🤖",
+    page_title="半导体产线智能监控与决策系统",
+    page_icon="🏭",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -224,6 +229,15 @@ DEFAULTS = {
     "workflow_intent": {},    # 最新一次意图解析结果
     "workflow_running": False,
     "executed_count": 0,
+    # 产线仿真
+    "simulation_engine": None,
+    "simulation_active": False,
+    "simulation_data": {},
+    "simulation_history": [],
+    "simulation_log": [],
+    "auto_check_enabled": True,
+    "auto_check_interval": SIMULATION_CONFIG["auto_check_default_interval"],
+    "current_tab": "chat",
 }
 for key, default in DEFAULTS.items():
     if key not in st.session_state:
@@ -454,7 +468,14 @@ def execute_workflow(user_input: str, status_callback=None) -> tuple[str, dict, 
     if status_callback:
         status_callback("🧩 任务拆解完成", 50, logs, intent_result, tasks)
 
-    # 步骤2: LangGraph 并行调度执行（替代旧的 DAGBuilder + Scheduler + threading）
+    # 步骤2: 注入仿真数据到产线相关任务
+    for task in tasks:
+        if task.get("task_type") in ("production_monitor", "production_adjuster"):
+            task.setdefault("params", {})
+            task["params"]["simulation_snapshot"] = st.session_state.get("simulation_data", {})
+            task["params"]["simulation_history"] = st.session_state.get("simulation_history", [])
+
+    # 步骤3: LangGraph 并行调度执行（替代旧的 DAGBuilder + Scheduler + threading）
     from meta_agent.langgraph_engine import run_with_langgraph
     if status_callback:
         status_callback("🚀 Agent调度执行中...", 70, logs, intent_result, tasks)
@@ -468,6 +489,414 @@ def execute_workflow(user_input: str, status_callback=None) -> tuple[str, dict, 
     if status_callback:
         status_callback("✅ 工作流执行完成", 100, logs, intent_result, tasks)
     return response, results, tasks, logs, intent_result
+
+
+# ─── Tab2 监控仪表盘渲染函数 ─────────────────────────────
+
+def _render_monitoring_dashboard():
+    """渲染 Tab2: 产线监控仪表盘"""
+
+    # === 控制栏 ===
+    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([0.3, 0.25, 0.45])
+    with ctrl_col1:
+        sim_active = st.session_state.simulation_active
+        btn_label = "⏸️ 停止仿真" if sim_active else "▶️ 启动仿真"
+        if st.button(btn_label, use_container_width=True,
+                     type="primary" if not sim_active else "secondary"):
+            toggle_simulation()
+    with ctrl_col2:
+        auto_enabled = st.toggle(
+            "🔁 自动检测调整",
+            value=st.session_state.auto_check_enabled,
+            help="开启后每N分钟自动检测产线异常并执行轻量级调整"
+        )
+        st.session_state.auto_check_enabled = auto_enabled
+        interval_min = st.selectbox(
+            "间隔(分钟)", [3, 5, 10], index=1,
+            key="auto_interval_selector", label_visibility="collapsed"
+        )
+        st.session_state.auto_check_interval = interval_min * 60
+    with ctrl_col3:
+        if st.session_state.simulation_engine:
+            elapsed = st.session_state.simulation_engine.elapsed_seconds
+            h = elapsed // 3600
+            m = (elapsed % 3600) // 60
+            s = elapsed % 60
+            st.metric("运行时长", f"{h:02d}:{m:02d}:{s:02d}")
+        else:
+            st.metric("运行时长", "--:--:--")
+
+    st.markdown("---")
+
+    # === 三条产线指标卡片 ===
+    sim_data = st.session_state.simulation_data
+    if sim_data and sim_data.get("production_lines"):
+        lines = sim_data["production_lines"]
+        card_col_l, card_col_e, card_col_t, card_col_log = st.columns(
+            [0.22, 0.22, 0.22, 0.34]
+        )
+
+        with card_col_l:
+            _render_line_card("litho", lines.get("litho", {}))
+        with card_col_e:
+            _render_line_card("etch", lines.get("etch", {}))
+        with card_col_t:
+            _render_test_card(lines.get("test", {}))
+        with card_col_log:
+            _render_adjustment_log()
+
+        st.markdown("---")
+
+        # === 良率趋势图 ===
+        st.subheader("📈 良率趋势")
+        _render_yield_chart()
+
+        # === 产出台账 ===
+        st.subheader("📊 产出台账")
+        _render_output_chart()
+
+        # === 事件时间线 ===
+        st.subheader("⚡ 事件时间线")
+        _render_event_timeline()
+    else:
+        st.markdown("""
+        <div style="text-align:center; padding:60px 20px; color:#8899aa;">
+            <p style="font-size:3rem;">🏭</p>
+            <p style="font-size:1.1rem;">产线仿真未启动</p>
+            <p style="font-size:0.85rem;">点击上方「启动仿真」按钮开始监控三条产线的实时数据</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+def _render_line_card(line_id: str, data: dict):
+    """渲染光刻/刻蚀产线指标卡片"""
+    if not data:
+        st.caption("无数据")
+        return
+
+    status = data.get("status", "running")
+    color = {
+        "running": "#00a878", "warning": "#e8a020",
+        "alarm": "#e04040", "idle": "#8899aa",
+    }.get(status, "#8899aa")
+
+    st.markdown(
+        f'<div style="background:#ffffff;border:1px solid #e0e4ea;'
+        f'border-left:4px solid {color};border-radius:8px;'
+        f'padding:10px 12px;margin:2px 0;">'
+        f'<div style="font-weight:700;font-size:0.9rem;color:#1a1a30;">'
+        f'{data.get("name", line_id)}</div>'
+        f'<div style="color:{color};font-size:0.78rem;font-weight:600;">'
+        f'{"✅ 正常" if status=="running" else "⚠️ 警告" if status=="warning" else "🚨 告警" if status=="alarm" else "⏸️ 空闲"}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    output = data.get("output", 0)
+    yield_rate = data.get("yield_rate", 0) * 100
+    oee = data.get("oee", 0) * 100
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("产出(wph)", f"{output:.0f}")
+    c2.metric("良率", f"{yield_rate:.1f}%")
+    c3.metric("OEE", f"{oee:.1f}%")
+
+    params = data.get("params", {})
+    if params:
+        with st.expander("工艺参数", expanded=False):
+            for k, v in params.items():
+                st.caption(f"{k}: {v:.1f}")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _render_test_card(data: dict):
+    """渲染测试线指标卡片"""
+    if not data:
+        st.caption("无数据")
+        return
+
+    dppm_val = data.get("dppm", 0)
+    status = "alarm" if dppm_val > 600 else "warning" if dppm_val > 500 else "running"
+    color = {"running": "#00a878", "warning": "#e8a020", "alarm": "#e04040"}.get(status)
+
+    st.markdown(
+        f'<div style="background:#ffffff;border:1px solid #e0e4ea;'
+        f'border-left:4px solid {color};border-radius:8px;'
+        f'padding:10px 12px;margin:2px 0;">'
+        f'<div style="font-weight:700;font-size:0.9rem;color:#1a1a30;">'
+        f'{data.get("name", "test")}</div>'
+        f'<div style="color:{color};font-size:0.78rem;font-weight:600;">'
+        f'{"✅ 正常" if status=="running" else "⚠️ 堆积" if status=="warning" else "🚨 超标"}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("吞吐(uph)", f"{data.get('throughput', 0):.0f}")
+    c2.metric("DPPM", dppm_val)
+    c3.metric("利用率", f"{data.get('utilization', 0)*100:.0f}%")
+
+    bins = data.get("bin_distribution", {})
+    if bins:
+        st.caption(
+            f"Bin分布: 良品{bins.get('bin1_good', 0)*100:.0f}% | "
+            f"可修{bins.get('bin2_repairable', 0)*100:.0f}% | "
+            f"报废{bins.get('bin3_scrap', 0)*100:.0f}%"
+        )
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _render_adjustment_log():
+    """渲染调整日志流"""
+    st.markdown(
+        '<div style="font-weight:700;font-size:0.85rem;color:#1a1a30;margin-bottom:6px;">'
+        '📋 调整日志</div>',
+        unsafe_allow_html=True,
+    )
+
+    sim = st.session_state.simulation_engine
+    if sim and sim.adjustment_log:
+        logs = sim.adjustment_log[-10:]
+        logs.reverse()
+        for entry in logs:
+            tag = entry.get("type", "manual")
+            tag_color = "#3d8af7" if tag == "manual" else "#00a878"
+            st.markdown(
+                f'<div style="font-size:0.72rem;padding:3px 0;border-bottom:1px solid #f0f0f0;">'
+                f'<span style="color:{tag_color};font-weight:600;">[{tag}]</span> '
+                f'{entry.get("time", "")} {entry.get("line", "")} '
+                f'{entry.get("param", "")}: {entry.get("old_value", "?")} → '
+                f'{entry.get("new_value", "?")}<br/>'
+                f'<span style="color:#667788;">{entry.get("reason", "")}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        if st.button("清空日志", key="clear_adj_log", use_container_width=True):
+            sim.adjustment_log.clear()
+            sim.auto_check_log.clear()
+            st.rerun()
+    else:
+        st.caption("暂无调整记录")
+
+
+def _render_yield_chart():
+    """渲染良率趋势折线图"""
+    history = st.session_state.simulation_history
+    if not history:
+        st.caption("等待数据...")
+        return
+
+    chart_data = []
+    for frame in history:
+        ts = frame.get("timestamp", "")
+        lines = frame.get("production_lines", {})
+        for line_id in ["litho", "etch"]:
+            data = lines.get(line_id, {})
+            chart_data.append({
+                "时间": ts,
+                "产线": data.get("name", line_id),
+                "良率": data.get("yield_rate", 0) * 100,
+            })
+
+    df = pd.DataFrame(chart_data)
+    if df.empty:
+        return
+    pivot = df.pivot(index="时间", columns="产线", values="良率")
+    st.line_chart(pivot, height=250)
+
+
+def _render_output_chart():
+    """渲染产出台账柱状图"""
+    history = st.session_state.simulation_history
+    if not history:
+        return
+
+    recent = history[-10:]
+    chart_data = []
+    for frame in recent:
+        ts = frame.get("timestamp", "")
+        lines = frame.get("production_lines", {})
+        for line_id, data in lines.items():
+            val = data.get("output", data.get("throughput", 0))
+            chart_data.append({
+                "时间": ts,
+                "产线": data.get("name", line_id),
+                "产出": val,
+            })
+
+    df = pd.DataFrame(chart_data)
+    if df.empty:
+        return
+    pivot = df.pivot(index="时间", columns="产线", values="产出")
+    st.bar_chart(pivot, height=200)
+
+
+def _render_event_timeline():
+    """渲染事件时间线"""
+    sim = st.session_state.simulation_engine
+    if not sim:
+        return
+
+    all_events = sim.event_log[-20:]
+    all_events.reverse()
+
+    if not all_events:
+        st.caption("暂无事件记录")
+        return
+
+    for ev in all_events:
+        ev_type = ev.get("type", "info")
+        icon = {"alarm": "🚨", "warning": "⚠️", "info": "ℹ️"}.get(ev_type, "📝")
+        st.caption(f"{icon} {ev.get('time', '')} {ev.get('message', '')}")
+
+
+# ─── 仿真生命周期管理 ───────────────────────────────────────
+
+def start_simulation():
+    """启动产线仿真引擎"""
+    if st.session_state.simulation_engine is None:
+        st.session_state.simulation_engine = SemiconductorSimulator()
+
+    sim = st.session_state.simulation_engine
+    if sim.is_running():
+        return
+
+    sim.start()
+    st.session_state.simulation_active = True
+
+    def _sim_loop():
+        while st.session_state.simulation_active and sim.is_running():
+            frame = sim.tick()
+            st.session_state.simulation_data = frame
+            st.session_state.simulation_history.append(frame)
+            max_frames = SIMULATION_CONFIG["history_max_frames"]
+            if len(st.session_state.simulation_history) > max_frames:
+                st.session_state.simulation_history = (
+                    st.session_state.simulation_history[-max_frames:]
+                )
+            time.sleep(SIMULATION_CONFIG["tick_interval_seconds"])
+
+    sim_thread = threading.Thread(target=_sim_loop, daemon=True)
+    sim_thread.start()
+
+    # 启动自动检测线程
+    auto_thread = threading.Thread(target=auto_check_loop, daemon=True)
+    auto_thread.start()
+
+
+def stop_simulation():
+    """停止产线仿真引擎"""
+    if st.session_state.simulation_engine:
+        st.session_state.simulation_engine.stop()
+    st.session_state.simulation_active = False
+
+
+def toggle_simulation():
+    """切换仿真启停状态"""
+    if st.session_state.simulation_active:
+        stop_simulation()
+    else:
+        start_simulation()
+    st.rerun()
+
+
+def run_auto_check():
+    """执行一次自动检测调整循环（轻量级，不经过LangGraph）"""
+    sim = st.session_state.simulation_engine
+    if sim is None or not sim.is_running():
+        return
+
+    summary = sim.get_summary()
+    alerts = []
+    adjustments_made = []
+
+    # 光刻线检测
+    litho = summary.get("litho", {})
+    if litho.get("yield_rate", 1) < 0.935:
+        alerts.append("光刻线良率偏低")
+        old_val = sim.litho.params.get("exposure_dose", 25.0)
+        new_val = min(30.0, old_val + 1.5)
+        sim.apply_adjustment("litho", "exposure_dose", new_val)
+        adjustments_made.append({
+            "time": time.strftime("%H:%M:%S"),
+            "line": "litho", "param": "exposure_dose",
+            "old_value": old_val, "new_value": new_val,
+            "reason": "自动补偿：良率低于阈值，增加曝光剂量",
+        })
+
+    # 刻蚀线检测
+    etch = summary.get("etch", {})
+    if etch.get("yield_rate", 1) < 0.910:
+        alerts.append("刻蚀线良率偏低")
+        old_val = sim.etch.params.get("rf_power", 500.0)
+        new_val = min(600.0, old_val + 30)
+        sim.apply_adjustment("etch", "rf_power", new_val)
+        adjustments_made.append({
+            "time": time.strftime("%H:%M:%S"),
+            "line": "etch", "param": "rf_power",
+            "old_value": old_val, "new_value": new_val,
+            "reason": "自动补偿：良率低于阈值，增加RF功率",
+        })
+
+    # 测试线检测
+    test = summary.get("test", {})
+    if test.get("dppm", 0) > 600:
+        alerts.append(f"测试线DPPM超标({test['dppm']})")
+
+    # OEE检测
+    for line_id in ["litho", "etch"]:
+        line_data = summary.get(line_id, {})
+        if line_data.get("oee", 1) < 0.60:
+            name = "光刻" if line_id == "litho" else "刻蚀"
+            alerts.append(f"{name}线OEE告警({line_data['oee']*100:.0f}%)")
+
+    # 写入日志
+    log_entry = {
+        "time": time.strftime("%H:%M:%S"),
+        "alerts": alerts,
+        "adjustments": len(adjustments_made),
+    }
+    sim.auto_check_log.append(log_entry)
+
+    for adj in adjustments_made:
+        adj_with_type = dict(adj)
+        adj_with_type["agent"] = "自动检测"
+        adj_with_type["type"] = "auto"
+        sim.adjustment_log.append(adj_with_type)
+
+    # 推送系统消息到聊天
+    if alerts or adjustments_made:
+        msg_parts = [f"🤖 **[{log_entry['time']}] 自动检测结果**"]
+        for a in alerts:
+            msg_parts.append(f"⚠️ {a}")
+        for adj in adjustments_made:
+            msg_parts.append(
+                f"🔧 已自动调整: {adj['line']}.{adj['param']} "
+                f"({adj['old_value']:.1f} → {adj['new_value']:.1f}) — {adj['reason']}"
+            )
+        if not alerts:
+            msg_parts.append("✅ 全部指标正常")
+
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "\n\n".join(msg_parts),
+            "msg_type": "system_notification",
+            "timestamp": time.strftime("%H:%M:%S"),
+        })
+
+
+def auto_check_loop():
+    """自动检测循环（后台线程）"""
+    while st.session_state.simulation_active:
+        if st.session_state.auto_check_enabled:
+            run_auto_check()
+        interval = st.session_state.auto_check_interval
+        for _ in range(interval):
+            if not st.session_state.simulation_active:
+                break
+            time.sleep(1)
 
 
 # ─── 侧边栏 ─────────────────────────────────────────────────
@@ -506,11 +935,11 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 💡 示例任务")
     examples = [
-        ("🏠 房产投资", "分析上海未来五年房价趋势并生成投资规划"),
-        ("🌐 网络优化", "优化数据中心网络路由策略，分析瓶颈与安全问题"),
-        ("📊 数据分析", "对用户行为数据进行清洗和建模分析"),
-        ("🛡️ 安全审计", "对信息系统进行安全漏洞扫描与合规审计"),
-        ("🗄️ 数据库迁移", "分析数据库架构并进行迁移优化"),
+        ("🔍 产线检测", "全面检测三条产线的运行状态，分析良率和产能异常"),
+        ("🔧 自动调整", "光刻线良率持续下降，分析原因并自动调整工艺参数"),
+        ("📊 综合分析", "对刻蚀线和测试线进行联合分析，找出良率瓶颈"),
+        ("⚡ 故障诊断", "设备OEE突然下降，排查是待料问题还是设备故障"),
+        ("📝 生成报告", "生成本周产线运行综合报告，包含趋势和建议"),
     ]
     for label, ex in examples:
         if st.button(label, key=f"ex_{label}", use_container_width=True):
@@ -530,13 +959,19 @@ with st.sidebar:
     st.caption(f"已对话 {len(st.session_state.messages)} 轮 | 执行 {st.session_state.executed_count} 次工作流")
 
 
-# ─── 主布局 ─────────────────────────────────────────────────
-col_main, col_right = st.columns([2.2, 1], gap="medium")
+# ─── Tab 切换 ─────────────────────────────────────────────
+tab1, tab2 = st.tabs(["💬 智能对话", "📊 产线监控"])
+
+# ═══════════════════════════════════════════════════════════
+# Tab 1: 智能对话
+# ═══════════════════════════════════════════════════════════
+with tab1:
+    col_main, col_right = st.columns([2.2, 1], gap="medium")
 
 with col_main:
     # 标题
-    st.markdown('<p class="main-header">🤖 跨域分布式多智能体协同调度系统</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Internet of Agents — Meta-Agent Orchestration Platform</p>', unsafe_allow_html=True)
+    st.markdown('<p class="main-header">🏭 半导体产线智能监控与决策系统</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Internet of Agents — Production Line Monitoring & Decision Platform</p>', unsafe_allow_html=True)
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
     # 聊天历史
@@ -545,10 +980,10 @@ with col_main:
         if not st.session_state.messages:
             st.markdown("""
             <div style="text-align:center; padding:40px 20px; color:#667788;">
-                <p style="font-size:3rem; margin-bottom:10px;">🤖</p>
-                <p style="font-size:1.2rem; font-weight:600; color:#4a4ae8;">欢迎使用多智能体协同调度系统</p>
-                <p style="font-size:0.9rem;">输入你的任务需求，系统将自动调度多个专业Agent协同完成分析</p>
-                <p style="font-size:0.8rem; color:#8899aa;">支持：数据分析 · 安全评估 · 网络优化 · 投资规划 · 数据库迁移 · 更多...</p>
+                <p style="font-size:3rem; margin-bottom:10px;">🏭</p>
+                <p style="font-size:1.2rem; font-weight:600; color:#4a4ae8;">半导体产线智能监控与决策系统</p>
+                <p style="font-size:0.9rem;">基于多Agent协同的产线状态检测 · 异常诊断 · 工艺调整 · 决策报告</p>
+                <p style="font-size:0.8rem; color:#8899aa;">支持：光刻线 · 刻蚀线 · 测试线 | 实时监控 + 智能分析 + 自动调整</p>
             </div>
             """, unsafe_allow_html=True)
 
@@ -610,6 +1045,10 @@ with col_main:
                                 if output:
                                     st.info(output)
                                 st.markdown("---")
+            elif msg_type == "system_notification":
+                # 系统自动推送消息（自动检测结果等）
+                with st.chat_message("assistant", avatar="🤖"):
+                    st.info(content)
             else:
                 # 普通聊天消息
                 avatar = "🧑" if role == "user" else "🤖"
@@ -840,8 +1279,10 @@ with col_right:
         st.markdown("---")
         st.markdown("#### 🧩 可用Agent")
         agents = [
+            ("📡", "产线监控", "实时读取产线运行数据"),
+            ("🔧", "产线调整", "计算并执行工艺参数调整"),
             ("🔍", "数据检索", "多源数据搜索获取"),
-            ("🧹", "数据处理", "清洗/ETL/特征工程"),
+            ("🧹", "数据处理", "清洗/ETL/趋势分析"),
             ("🤖", "机器学习", "预测/分类/回归"),
             ("⚙️", "算法优化", "路径/组合/调度"),
             ("🛡️", "安全分析", "漏洞扫描/风险评估"),
@@ -849,8 +1290,14 @@ with col_right:
             ("🗄️", "数据库", "查询优化/迁移"),
             ("💻", "代码执行", "沙箱安全执行"),
             ("📊", "策略输出", "综合报告/建议"),
-            ("🔗", "HTTP调用", "REST API/Webhook"),
-            ("📄", "报告导出", "Word/Excel/PDF 文件"),
+            ("📄", "报告导出", "Word/Excel/PDF文件"),
         ]
         for icon, name, desc in agents:
             st.caption(f"{icon} **{name}** — {desc}")
+
+
+# ═══════════════════════════════════════════════════════════
+# Tab 2: 产线监控仪表盘
+# ═══════════════════════════════════════════════════════════
+with tab2:
+    _render_monitoring_dashboard()

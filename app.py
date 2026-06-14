@@ -2,7 +2,6 @@
 
 import streamlit as st
 import time
-import threading
 import pandas as pd
 
 from simulation.semiconductor_sim import SemiconductorSimulator
@@ -757,38 +756,41 @@ def _render_event_timeline():
         st.caption(f"{icon} {ev.get('time', '')} {ev.get('message', '')}")
 
 
-# ─── 仿真生命周期管理 ───────────────────────────────────────
+# ─── 仿真生命周期管理（主线程模式，无后台线程）────────────
+
+def tick_simulation():
+    """推进仿真一帧。在每次 Streamlit 脚本运行时调用。"""
+    sim = st.session_state.simulation_engine
+    if sim is None or not st.session_state.simulation_active:
+        return
+
+    frame = sim.tick()
+    st.session_state.simulation_data = frame
+    st.session_state.simulation_history.append(frame)
+    max_frames = SIMULATION_CONFIG["history_max_frames"]
+    if len(st.session_state.simulation_history) > max_frames:
+        st.session_state.simulation_history = (
+            st.session_state.simulation_history[-max_frames:]
+        )
+
+    # 自动检测调整：每N秒执行一次
+    last_check = st.session_state.get("_last_auto_check_time", 0)
+    now = time.time()
+    if st.session_state.auto_check_enabled:
+        if now - last_check >= st.session_state.auto_check_interval:
+            _run_auto_check_once()
+            st.session_state._last_auto_check_time = now
+
 
 def start_simulation():
     """启动产线仿真引擎"""
     if st.session_state.simulation_engine is None:
         st.session_state.simulation_engine = SemiconductorSimulator()
-
     sim = st.session_state.simulation_engine
-    if sim.is_running():
-        return
-
-    sim.start()
+    if not sim.is_running():
+        sim.start()
     st.session_state.simulation_active = True
-
-    def _sim_loop():
-        while st.session_state.simulation_active and sim.is_running():
-            frame = sim.tick()
-            st.session_state.simulation_data = frame
-            st.session_state.simulation_history.append(frame)
-            max_frames = SIMULATION_CONFIG["history_max_frames"]
-            if len(st.session_state.simulation_history) > max_frames:
-                st.session_state.simulation_history = (
-                    st.session_state.simulation_history[-max_frames:]
-                )
-            time.sleep(SIMULATION_CONFIG["tick_interval_seconds"])
-
-    sim_thread = threading.Thread(target=_sim_loop, daemon=True)
-    sim_thread.start()
-
-    # 启动自动检测线程
-    auto_thread = threading.Thread(target=auto_check_loop, daemon=True)
-    auto_thread.start()
+    st.session_state._last_auto_check_time = time.time()
 
 
 def stop_simulation():
@@ -802,21 +804,13 @@ def toggle_simulation():
     """切换仿真启停状态"""
     if st.session_state.simulation_active:
         stop_simulation()
-        st.rerun()
     else:
         start_simulation()
-        # 等待后台线程产出第一帧数据
-        waited = 0
-        while waited < 3:
-            time.sleep(0.5)
-            waited += 0.5
-            if st.session_state.simulation_data.get("production_lines"):
-                break
-        st.rerun()
+    st.rerun()
 
 
-def run_auto_check():
-    """执行一次自动检测调整循环（轻量级，不经过LangGraph）"""
+def _run_auto_check_once():
+    """执行一次自动检测调整（轻量级）"""
     sim = st.session_state.simulation_engine
     if sim is None or not sim.is_running():
         return
@@ -874,10 +868,9 @@ def run_auto_check():
     sim.auto_check_log.append(log_entry)
 
     for adj in adjustments_made:
-        adj_with_type = dict(adj)
-        adj_with_type["agent"] = "自动检测"
-        adj_with_type["type"] = "auto"
-        sim.adjustment_log.append(adj_with_type)
+        adj["agent"] = "自动检测"
+        adj["type"] = "auto"
+        sim.adjustment_log.append(adj)
 
     # 推送系统消息到聊天
     if alerts or adjustments_made:
@@ -898,18 +891,6 @@ def run_auto_check():
             "msg_type": "system_notification",
             "timestamp": time.strftime("%H:%M:%S"),
         })
-
-
-def auto_check_loop():
-    """自动检测循环（后台线程）"""
-    while st.session_state.simulation_active:
-        if st.session_state.auto_check_enabled:
-            run_auto_check()
-        interval = st.session_state.auto_check_interval
-        for _ in range(interval):
-            if not st.session_state.simulation_active:
-                break
-            time.sleep(1)
 
 
 # ─── 侧边栏 ─────────────────────────────────────────────────
@@ -971,6 +952,9 @@ with st.sidebar:
 
     st.caption(f"已对话 {len(st.session_state.messages)} 轮 | 执行 {st.session_state.executed_count} 次工作流")
 
+
+# ─── 仿真推进（主线程，每次脚本运行推进一帧）─────────────
+tick_simulation()
 
 # ─── Tab 切换 ─────────────────────────────────────────────
 tab1, tab2 = st.tabs(["💬 智能对话", "📊 产线监控"])

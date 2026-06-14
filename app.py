@@ -472,7 +472,7 @@ def render_workflow_stage(
         st.code(log_text, language=None)
 
 
-def execute_workflow(user_input: str, status_callback=None) -> tuple[str, dict, list, list, dict]:
+def execute_workflow(user_input: str, status_callback=None):
     """使用 LangChain + LangGraph 执行 Meta-Agent → Worker 调度流程。"""
     from config import LLM_CONFIG
 
@@ -528,11 +528,9 @@ def execute_workflow(user_input: str, status_callback=None) -> tuple[str, dict, 
         status_callback("📦 结果汇总中...", 95, logs, intent_result, tasks)
 
     response, wf_files = build_workflow_response(user_input, intent_result, tasks, results)
-    # 将生成的文件路径注入 results，供 UI 下载使用
-    results["_generated_files"] = wf_files
     if status_callback:
         status_callback("✅ 工作流执行完成", 100, logs, intent_result, tasks)
-    return response, results, tasks, logs, intent_result
+    return response, results, tasks, logs, intent_result, wf_files
 
 
 # ─── Tab2 监控仪表盘渲染函数 ─────────────────────────────
@@ -1075,8 +1073,7 @@ with col_main:
                     st.markdown(content, unsafe_allow_html=True)
 
                     # ── 文件下载按钮（附在气泡下方）──
-                    wf_results = msg.get("workflow_results", {})
-                    gen_files = wf_results.get("_generated_files", []) if isinstance(wf_results, dict) else []
+                    gen_files = msg.get("workflow_files", [])
                     if gen_files:
                         for fpath in gen_files:
                             fname = fpath.replace("\\", "/").split("/")[-1]
@@ -1213,7 +1210,7 @@ with col_right:
                 with progress_placeholder.container():
                     render_workflow_stage(stage, progress, logs, intent_result, tasks)
 
-            response_html, results, tasks, logs, intent_result = execute_workflow(
+            response_html, results, tasks, logs, intent_result, wf_files = execute_workflow(
                 last_user_msg,
                 status_callback=update_workflow_stage,
             )
@@ -1236,6 +1233,7 @@ with col_right:
                 "msg_type": "workflow",
                 "workflow_results": results,
                 "workflow_tasks": tasks,
+                "workflow_files": wf_files,
                 "timestamp": time.strftime("%H:%M:%S"),
             })
             st.rerun()

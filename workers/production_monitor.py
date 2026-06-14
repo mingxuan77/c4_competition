@@ -22,6 +22,23 @@ class ProductionMonitorWorker(BaseWorker):
         sim_history = params.get("simulation_history", [])
         lines_data = sim_snapshot.get("production_lines", {})
 
+        # 仿真未启动时的兜底处理
+        if not lines_data:
+            return {
+                "output": (
+                    "⚠️ **产线仿真引擎未启动**，无法获取实时数据。\n\n"
+                    "请在 Tab2「产线监控」页面点击「启动仿真」按钮，"
+                    "然后再发起产线检测请求。\n\n"
+                    "当前系统支持对以下三条半导体产线的监控：\n"
+                    "- 光刻线 #L1（曝光、对位）\n"
+                    "- 刻蚀线 #E1（RF功率、腔室压力）\n"
+                    "- 测试线 #T1（DPPM、Bin分类）\n\n"
+                    f"你的任务「{desc}」将在仿真启动后执行。"
+                ),
+                "raw_metrics": {},
+                "alerts": ["仿真未启动，无实时数据"],
+            }
+
         # 构建结构化文本摘要
         summary_parts = ["## 半导体产线实时状态\n"]
         for line_id, data in lines_data.items():

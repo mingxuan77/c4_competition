@@ -567,6 +567,11 @@ def _render_monitoring_dashboard():
         </div>
         """, unsafe_allow_html=True)
 
+    # 仿真运行时自动刷新Tab2（每秒更新一次图表）
+    if st.session_state.simulation_active:
+        time.sleep(1)
+        st.rerun()
+
 
 def _render_line_card(line_id: str, data: dict):
     """渲染光刻/刻蚀产线指标卡片"""
@@ -797,9 +802,17 @@ def toggle_simulation():
     """切换仿真启停状态"""
     if st.session_state.simulation_active:
         stop_simulation()
+        st.rerun()
     else:
         start_simulation()
-    st.rerun()
+        # 等待后台线程产出第一帧数据
+        waited = 0
+        while waited < 3:
+            time.sleep(0.5)
+            waited += 0.5
+            if st.session_state.simulation_data.get("production_lines"):
+                break
+        st.rerun()
 
 
 def run_auto_check():

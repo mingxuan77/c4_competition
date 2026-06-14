@@ -23,6 +23,18 @@ class ProductionAdjusterWorker(BaseWorker):
         upstream = params.get("upstream_results", {})
         sim_snapshot = params.get("simulation_snapshot", {})
 
+        # 仿真未启动时的兜底处理
+        if not sim_snapshot.get("production_lines"):
+            return {
+                "worker": self.name,
+                "output": (
+                    "⚠️ **产线仿真引擎未启动**，无法执行参数调整。\n\n"
+                    "请在 Tab2「产线监控」页面启动仿真引擎，"
+                    "确保三条产线有实时数据后再发起调整请求。"
+                ),
+                "applied_adjustments": [],
+            }
+
         # 从上游提取告警
         alerts = []
         upstream_outputs = []

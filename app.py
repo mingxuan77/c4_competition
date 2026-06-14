@@ -566,11 +566,6 @@ def _render_monitoring_dashboard():
         </div>
         """, unsafe_allow_html=True)
 
-    # 仿真运行时自动刷新Tab2（每秒更新一次图表）
-    if st.session_state.simulation_active:
-        time.sleep(1)
-        st.rerun()
-
 
 def _render_line_card(line_id: str, data: dict):
     """渲染光刻/刻蚀产线指标卡片"""
@@ -1298,3 +1293,8 @@ with col_right:
 # ═══════════════════════════════════════════════════════════
 with tab2:
     _render_monitoring_dashboard()
+
+# ─── 自动刷新：仅仿真运行中 + 无工作流时，每秒更新 ──────
+if st.session_state.simulation_active and not st.session_state.workflow_running:
+    time.sleep(1)
+    st.rerun()
